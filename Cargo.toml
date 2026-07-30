@@ -1,0 +1,28 @@
+[package]
+name = "open-xiaoai"
+version = "1.2.0-airplay-music.2"
+edition = "2021"
+
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[workspace.metadata.cross.target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:0.2.5"
+
+[dependencies]
+anyhow = "1"
+futures = "0.3.31"
+libc = "0.2"
+rand = "0.9.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+shairplay = { version = "0.7.0", default-features = false }
+tokio = { version = "1.47", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.26.2"
+uuid = { version = "1.18.1", features = ["v4"] }

@@ -1,0 +1,110 @@
+{
+  "server_url": "ws://127.0.0.1:4399",
+  "airplay": {
+    "enabled": true,
+    "name": "Xiaomi 智能音箱 Pro AirPlay",
+    "port": 5000,
+    "password": "",
+    "hwaddr": "02:4f:48:32:50:01",
+    "max_clients": 1,
+    "output": {
+      "backend": "aplay",
+      "aplay_path": "/usr/bin/aplay",
+      "device": "default",
+      "format": "S16_LE",
+      "extra_args": []
+    },
+    "interruption": {
+      "mode": "duck",
+      "duck_gain": 0.25
+    }
+  },
+  "music": {
+    "enabled": true,
+    "route_mode": "fixed_rules",
+    "commands": {
+      "required_prefixes": [],
+      "explicit_prefixes": ["本地音乐", "播放歌曲", "音乐"],
+      "play_words": ["来一首", "我想听", "播放", "放"],
+      "singer_words": ["歌手", "的歌"],
+      "playlist_words": ["歌单"],
+      "pause_words": ["暂停播放", "暂停"],
+      "resume_words": ["继续播放", "恢复播放"],
+      "next_words": ["下一首", "换一首"],
+      "previous_words": ["上一首"],
+      "stop_words": ["停止播放", "关闭音乐"],
+      "shuffle_words": ["随机播放", "打乱播放", "随便放点歌"],
+      "repeat_one_words": ["单曲循环"],
+      "repeat_all_words": ["列表循环"]
+    },
+    "search": {
+      "provider": "qq_music",
+      "api_url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
+      "page_size": 20,
+      "timeout_ms": 5000,
+      "max_retries": 3,
+      "retry_delay_ms": 500,
+      "random_toplist_id": 4
+    },
+    "play_url": {
+      "primary_url_template": "https://music.haitangw.cc/music/qq_song_kw.php?id={mid}",
+      "primary_json_path": "data.url",
+      "primary_min_interval_ms": 3000,
+      "primary_failure_cooldown_ms": 60000,
+      "primary_cooldown_retries": 2,
+      "backup_enabled": true,
+      "backup_url_template": "http://175.27.166.236/kgqq1/qq.php?id={mid}&type=json&level=exhigh",
+      "backup_json_path": "data.url",
+      "backup_headers": {},
+      "cache_ttl_s": 1800,
+      "cache_max_entries": 128
+    },
+    "player": {
+      "path": "/usr/bin/miplayer",
+      "log_path": "/tmp/open-xiaoai-music-player.log",
+      "start_timeout_ms": 1500,
+      "stop_timeout_ms": 1000,
+      "unexpected_exit_retries": 1,
+      "max_consecutive_failures": 3,
+      "native_stop_command": "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true"
+    },
+    "queue": {
+      "autoplay_count": 10,
+      "after_single_song": "same_artist",
+      "default_order": "sequential",
+      "repeat_mode": "off",
+      "deduplicate_by": "mid",
+      "on_url_failure": "skip_to_next"
+    },
+    "interruption": {
+      "on_wake": "pause",
+      "resume_on_dialog_finish": true
+    }
+  },
+  "audio_policy": {
+    "on_airplay_start": "pause_music",
+    "on_airplay_end": "resume_music",
+    "music_while_airplay": "reject"
+  },
+  "led": {
+    "enabled": true,
+    "update_hz": 6,
+    "min_db": -48.0,
+    "max_db": -8.0,
+    "attack": 0.45,
+    "release": 0.15,
+    "level_commands": [
+      "/bin/show_led 8 000608",
+      "/bin/show_led 8 000F14",
+      "/bin/show_led 8 001C26",
+      "/bin/show_led 8 00313F",
+      "/bin/show_led 8 00566B",
+      "/bin/show_led 8 008FA8"
+    ],
+    "off_command": "/bin/shut_led 8",
+    "music_start_command": "/bin/show_led 8 00A05A",
+    "music_pause_command": "/bin/show_led 8 805000",
+    "music_stop_command": "/bin/shut_led 8",
+    "suspend_during_wakeup": true
+  }
+}
