@@ -16,6 +16,7 @@ pub struct AppConfig {
     pub music: MusicConfig,
     pub audio_policy: AudioPolicyConfig,
     pub led: LedConfig,
+    pub native_events: NativeEventsConfig,
 }
 
 impl Default for AppConfig {
@@ -26,6 +27,7 @@ impl Default for AppConfig {
             music: MusicConfig::default(),
             audio_policy: AudioPolicyConfig::default(),
             led: LedConfig::default(),
+            native_events: NativeEventsConfig::default(),
         }
     }
 }
@@ -254,7 +256,7 @@ impl Default for MusicPlayerConfig {
             log_path: "/tmp/open-xiaoai-music-player.log".into(),
             start_timeout_ms: 1_500, stop_timeout_ms: 1_000,
             unexpected_exit_retries: 1, max_consecutive_failures: 3,
-            native_stop_command: "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true".into(),
+            native_stop_command: "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"common\",\"action\":\"pause\"}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true".into(),
         }
     }
 }
@@ -353,6 +355,34 @@ impl Default for LedConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct NativeEventsConfig {
+    pub enabled: bool,
+    pub monitor_command: String,
+    pub button_sequence_window_ms: u64,
+    pub button_debounce_ms: u64,
+    pub native_quench_delay_ms: u64,
+    pub led_effect_id: u32,
+    pub led_restore_on_any_shut: bool,
+    pub led_restore_delay_ms: u64,
+}
+
+impl Default for NativeEventsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            monitor_command: "ubus monitor".into(),
+            button_sequence_window_ms: 1_500,
+            button_debounce_ms: 700,
+            native_quench_delay_ms: 300,
+            led_effect_id: 14,
+            led_restore_on_any_shut: true,
+            led_restore_delay_ms: 250,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AppConfig;
@@ -370,5 +400,21 @@ mod tests {
         assert_eq!(config.music.play_url.primary_failure_cooldown_ms, 60_000);
         assert_eq!(config.music.play_url.primary_cooldown_retries, 2);
         assert!(!config.led.enabled);
+        assert!(!config.native_events.enabled);
+    }
+
+    #[test]
+    fn example_uses_verified_oh2p_led_effect() {
+        let config: AppConfig =
+            serde_json::from_str(include_str!("../client.example.json")).unwrap();
+        assert!(config.led.enabled);
+        assert_eq!(config.led.level_commands, ["/bin/show_led 14"]);
+        assert_eq!(config.led.off_command, "/bin/shut_led 14");
+        assert_eq!(config.led.music_start_command, "/bin/show_led 14");
+        assert_eq!(config.led.music_pause_command, "/bin/shut_led 14");
+        assert_eq!(config.led.music_stop_command, "/bin/shut_led 14");
+        assert!(config.native_events.enabled);
+        assert_eq!(config.native_events.led_effect_id, 14);
+        assert!(config.native_events.led_restore_on_any_shut);
     }
 }

@@ -66,7 +66,7 @@
       "stop_timeout_ms": 1000,
       "unexpected_exit_retries": 1,
       "max_consecutive_failures": 3,
-      "native_stop_command": "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true"
+      "native_stop_command": "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"common\",\"action\":\"pause\"}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true"
     },
     "queue": {
       "autoplay_count": 10,
@@ -88,23 +88,28 @@
   },
   "led": {
     "enabled": true,
-    "update_hz": 6,
+    "update_hz": 2,
     "min_db": -48.0,
     "max_db": -8.0,
     "attack": 0.45,
     "release": 0.15,
     "level_commands": [
-      "/bin/show_led 8 000608",
-      "/bin/show_led 8 000F14",
-      "/bin/show_led 8 001C26",
-      "/bin/show_led 8 00313F",
-      "/bin/show_led 8 00566B",
-      "/bin/show_led 8 008FA8"
+      "/bin/show_led 14"
     ],
-    "off_command": "/bin/shut_led 8",
-    "music_start_command": "/bin/show_led 8 00A05A",
-    "music_pause_command": "/bin/show_led 8 805000",
-    "music_stop_command": "/bin/shut_led 8",
+    "off_command": "/bin/shut_led 14",
+    "music_start_command": "/bin/show_led 14",
+    "music_pause_command": "/bin/shut_led 14",
+    "music_stop_command": "/bin/shut_led 14",
     "suspend_during_wakeup": true
+  },
+  "native_events": {
+    "enabled": true,
+    "monitor_command": "ubus monitor",
+    "button_sequence_window_ms": 1500,
+    "button_debounce_ms": 700,
+    "native_quench_delay_ms": 300,
+    "led_effect_id": 14,
+    "led_restore_on_any_shut": true,
+    "led_restore_delay_ms": 250
   }
 }

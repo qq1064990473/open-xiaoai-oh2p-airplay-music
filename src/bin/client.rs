@@ -21,6 +21,7 @@ use open_xiaoai::services::media::MediaBus;
 use open_xiaoai::services::monitor::instruction::InstructionMonitor;
 use open_xiaoai::services::monitor::playing::PlayingMonitor;
 use open_xiaoai::services::music::{MusicCommandParser, MusicService};
+use open_xiaoai::services::native_events::NativeEventService;
 use open_xiaoai::services::routing::RoutingService;
 
 struct AppClient {
@@ -260,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let routing = RoutingService::new(
-        music,
+        music.clone(),
         MusicCommandParser::new(config.music.clone()),
         media.clone(),
         config.music.player.native_stop_command.clone(),
@@ -280,6 +281,13 @@ async fn main() -> anyhow::Result<()> {
         .await;
 
     let _led_controller = LedController::start(config.led.clone(), media.clone());
+    let _native_event_service = NativeEventService::start(
+        config.native_events.clone(),
+        config.led.clone(),
+        config.music.player.native_stop_command.clone(),
+        music,
+        media.clone(),
+    );
 
     // Local media services deliberately live outside the WebSocket reconnect loop.
     let _airplay_service = match AirPlayService::start(config.airplay.clone(), media).await {

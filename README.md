@@ -12,7 +12,9 @@
 - haitangw 主接口带最小访问间隔和失败冷却；失败时回退到外置 MusicFree QQ 接口。
 - 主备接口均失败时保留当前 MID，低频有限重试，不扫描后续队列。
 - AirPlay 与本地音乐互斥仲裁，小爱唤醒期间自动暂停或降低音量。
-- AirPlay 使用青蓝色 PCM 音量灯效；本地音乐播放为绿色、暂停为琥珀色。
+- AirPlay 与本地音乐播放使用 OH2P 原生 14 号灯效，暂停或停止时关闭。
+- 实体播放键在本地音乐活跃时控制暂停/继续，其他时间保留小米原生行为。
+- 小米 TTS 结束覆盖 LED 后，自动恢复仍在播放的网络音乐灯效。
 - 不修改固件分区、麦克风通道或 ALSA 配置。
 
 ## 下载
@@ -20,13 +22,13 @@
 OH2P / ARMv7 / glibc 2.25 二进制：
 
 ```text
-dist/client-airplay-music-backup-led-oh2p-armv7-glibc2.25-20260729
+dist/client-airplay-music-native-events-oh2p-armv7-glibc2.25-20260803
 ```
 
 SHA-256：
 
 ```text
-2c20c5205f68864a64c776a8c0dc7ab02228a0c1ae55b618c717ece0c208c9c8
+2be60f7593c1295818afe2e62665f4feab20ed4098ee1884d40790dfdacfed3e
 ```
 
 完整上传、前台测试和回滚步骤见 [DEPLOY-OH2P.md](DEPLOY-OH2P.md)。
@@ -63,14 +65,14 @@ QQ Music MusicU 只用于搜索 MID。播放 URL 获取顺序：
 
 ## LED
 
-示例配置针对 OH2P 使用：
+示例配置针对已验证的 OH2P 原生 14 号灯效：
 
 ```shell
-/bin/show_led 8 RRGGBB
-/bin/shut_led 8
+/bin/show_led 14
+/bin/shut_led 14
 ```
 
-AirPlay 能直接读取 PCM，因此按 RMS/dBFS 映射为六档青蓝色亮度。本地音乐由系统 `miplayer` 播放，Client 无法读取其 PCM，只显示播放、暂停和停止状态色。所有颜色均在配置文件中外置。
+AirPlay 开始或本地音乐播放时显示 14 号原生灯效，本地音乐暂停、停止或 AirPlay 会话结束时关闭该灯效。若小米 TTS 在播报结束时关闭 `L=14`，Client 会在确认网络音乐仍为播放状态后恢复灯效。当前 OH2P 的 `ledd` 不支持原示例使用的 `L=8 + rgb` 自定义颜色，因此本版不再按 PCM 音量分级切换颜色。所有命令仍保留在外置配置文件中。
 
 ## 构建
 
