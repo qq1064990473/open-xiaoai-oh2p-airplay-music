@@ -16,6 +16,7 @@ use open_xiaoai::services::connect::data::{Event, Request, Response, Stream};
 use open_xiaoai::services::connect::handler::MessageHandler;
 use open_xiaoai::services::connect::message::{MessageManager, WsStream};
 use open_xiaoai::services::connect::rpc::RPC;
+use open_xiaoai::services::home_assistant::HomeAssistantService;
 use open_xiaoai::services::led::LedController;
 use open_xiaoai::services::media::MediaBus;
 use open_xiaoai::services::monitor::instruction::InstructionMonitor;
@@ -247,6 +248,30 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("server_url must not be empty");
     }
 
+    let _ = tokio::fs::remove_file(&config.home_assistant.ready_file).await;
+    let home_assistant = match HomeAssistantService::connect(config.home_assistant.clone()).await {
+        Ok(Some(service)) => {
+            if let Err(err) = tokio::fs::write(service.ready_file(), b"ready\n").await {
+                eprintln!("[ha] failed to publish ready marker: {err}");
+                None
+            } else {
+                println!(
+                    "[ha] authenticated and ready: {}",
+                    config.home_assistant.base_url
+                );
+                Some(service)
+            }
+        }
+        Ok(None) => {
+            println!("[ha] disabled by config");
+            None
+        }
+        Err(err) => {
+            eprintln!("[ha] disabled until configuration is fixed: {err:#}");
+            None
+        }
+    };
+
     let (media, media_events) = MediaBus::new();
     let music = MusicService::start(
         config.music.clone(),
@@ -265,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
         MusicCommandParser::new(config.music.clone()),
         media.clone(),
         config.music.player.native_stop_command.clone(),
+        home_assistant,
     );
     let mut instruction_monitor = InstructionMonitor::new();
     instruction_monitor
