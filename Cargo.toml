@@ -1,6 +1,6 @@
 [package]
 name = "open-xiaoai"
-version = "1.3.0-airplay-music-native-events.1"
+version = "1.4.0-airplay-music-ha.1"
 edition = "2021"
 
 [profile.release]

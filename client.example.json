@@ -111,5 +111,21 @@
     "led_effect_id": 14,
     "led_restore_on_any_shut": true,
     "led_restore_delay_ms": 250
+  },
+  "home_assistant": {
+    "enabled": false,
+    "base_url": "https://homeassistant.example.com:8123",
+    "token_file": "/data/open-xiaoai/ha.token",
+    "agent_id": "conversation.home_assistant",
+    "language": "zh-CN",
+    "connect_timeout_ms": 500,
+    "request_timeout_ms": 1500,
+    "fallback_to_xiaoai": true,
+    "fallback_on_timeout": false,
+    "speak_response": true,
+    "failure_speech": "家庭助理暂时没有响应",
+    "allow_insecure_http": false,
+    "ready_file": "/tmp/open-xiaoai-ha-ready",
+    "lab_file": "/tmp/open-xiaoai-pns.lab"
   }
 }

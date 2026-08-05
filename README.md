@@ -1,6 +1,6 @@
-# Open-XiaoAI OH2P AirPlay + Music Client
+# Open-XiaoAI OH2P AirPlay + Music + HA Client
 
-基于 [idootop/open-xiaoai](https://github.com/idootop/open-xiaoai) `packages/client-rust` 的 OH2P 本地媒体版本，为 Xiaomi 智能音箱 Pro 增加 AirPlay 1、固定词音乐播放、播放队列和 LED 状态灯。音乐指令不依赖 LLM。
+基于 [idootop/open-xiaoai](https://github.com/idootop/open-xiaoai) `packages/client-rust` 的 OH2P 本地版本，为 Xiaomi 智能音箱 Pro 增加 AirPlay 1、固定词音乐播放、播放队列、LED 状态灯和 Home Assistant Conversation 路由。音乐及 HA 控制都不依赖 LLM。
 
 ## 功能
 
@@ -15,6 +15,9 @@
 - AirPlay 与本地音乐播放使用 OH2P 原生 14 号灯效，暂停或停止时关闭。
 - 实体播放键在本地音乐活跃时控制暂停/继续，其他时间保留小米原生行为。
 - 小米 TTS 结束覆盖 LED 后，自动恢复仍在播放的网络音乐灯效。
+- 复用小米原生唤醒、AEC、降噪、VAD 和云端 ASR，将最终文字直接提交给 HA Conversation。
+- HA 无法匹配、鉴权失败或连接失败时，将原 ASR 文字回退给小爱原生 NLP；超时默认不重复执行，避免同一设备动作触发两次。
+- HA 鉴权成功前不进入 ASR-only；Client 异常退出或重启后自动恢复原生小爱，避免音箱失去应答能力。
 - 不修改固件分区、麦克风通道或 ALSA 配置。
 
 ## 下载
@@ -22,20 +25,20 @@
 OH2P / ARMv7 / glibc 2.25 二进制：
 
 ```text
-dist/client-airplay-music-native-events-oh2p-armv7-glibc2.25-20260803
+dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260805
 ```
 
 SHA-256：
 
 ```text
-2be60f7593c1295818afe2e62665f4feab20ed4098ee1884d40790dfdacfed3e
+363be062b867cf2ccdb4b12d5337f4434a12b976efecee413f22e7a0cda811ef
 ```
 
-完整上传、前台测试和回滚步骤见 [DEPLOY-OH2P.md](DEPLOY-OH2P.md)。
+HA 版本的启用、测试和回滚步骤见 [DEPLOY-HA-OH2P.md](DEPLOY-HA-OH2P.md)。旧媒体版本的手动部署说明仍保留在 [DEPLOY-OH2P.md](DEPLOY-OH2P.md)。
 
 ## 配置
 
-将 `client.example.json` 上传为 `/data/open-xiaoai/client.json`，按需修改 AirPlay 名称、硬件地址和音乐参数：
+将 `client.example.json` 上传为 `/data/open-xiaoai/client.json`，按需修改 AirPlay 名称、硬件地址、音乐参数和 `home_assistant`：
 
 ```shell
 /data/open-xiaoai/client-media.new \
@@ -51,7 +54,9 @@ SHA-256：
 - `随机播放`
 - `下一首`、`上一首`、`暂停`、`继续播放`、`停止播放`
 
-只有本地音乐会话活跃时，短控制词才会被 Client 接管；其他问答继续交给原生小爱。
+只有本地音乐会话活跃时，短控制词才会被音乐路由接管。HA 就绪时，其余最终 ASR 文本先交给 HA Conversation；HA 无法匹配时再交给原生小爱。
+
+HA 长期访问令牌只存放在音箱的 `/data/open-xiaoai/ha.token`，不要写进 JSON 或提交到 Git。`init-ha.example.sh` 只有在 Client 使用该令牌成功访问 `/api/` 后，才会创建运行时 ASR-only 标记并重启 AIVS。HA 返回 `no_intent_match` 时，Client 使用 `mibrain ai_service` 把原文字交还给小爱。
 
 ## 音乐接口
 
@@ -91,6 +96,7 @@ cargo zigbuild --release \
 - 先用新文件名前台运行，确认功能后再替换现有 Client。
 - 不要把小米账号、pasSToken、AirPlay 密码或其他密钥提交到配置文件。
 - WebSocket Server 可要求 Client 执行设备端操作，只连接可信地址。
+- 公网 `http://` HA 地址会以明文传输 Bearer token。生产使用应改为 HTTPS、WireGuard/Tailscale 等私网入口，并将 `allow_insecure_http` 恢复为 `false`。
 - 本项目仅供个人设备研究和测试，请遵守音乐内容及第三方服务的许可要求。
 
 ## 上游与许可
