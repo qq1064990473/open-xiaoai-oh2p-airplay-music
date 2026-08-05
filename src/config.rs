@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub audio_policy: AudioPolicyConfig,
     pub led: LedConfig,
     pub native_events: NativeEventsConfig,
+    pub home_assistant: HomeAssistantConfig,
 }
 
 impl Default for AppConfig {
@@ -28,6 +29,7 @@ impl Default for AppConfig {
             audio_policy: AudioPolicyConfig::default(),
             led: LedConfig::default(),
             native_events: NativeEventsConfig::default(),
+            home_assistant: HomeAssistantConfig::default(),
         }
     }
 }
@@ -383,6 +385,46 @@ impl Default for NativeEventsConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct HomeAssistantConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub token_file: String,
+    pub agent_id: String,
+    pub language: String,
+    pub connect_timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub fallback_to_xiaoai: bool,
+    pub fallback_on_timeout: bool,
+    pub speak_response: bool,
+    pub failure_speech: String,
+    pub allow_insecure_http: bool,
+    pub ready_file: String,
+    pub lab_file: String,
+}
+
+impl Default for HomeAssistantConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://127.0.0.1:8123".into(),
+            token_file: "/data/open-xiaoai/ha.token".into(),
+            agent_id: "conversation.home_assistant".into(),
+            language: "zh-CN".into(),
+            connect_timeout_ms: 500,
+            request_timeout_ms: 1_500,
+            fallback_to_xiaoai: true,
+            fallback_on_timeout: false,
+            speak_response: true,
+            failure_speech: "家庭助理暂时没有响应".into(),
+            allow_insecure_http: false,
+            ready_file: "/tmp/open-xiaoai-ha-ready".into(),
+            lab_file: "/tmp/open-xiaoai-pns.lab".into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AppConfig;
@@ -401,6 +443,8 @@ mod tests {
         assert_eq!(config.music.play_url.primary_cooldown_retries, 2);
         assert!(!config.led.enabled);
         assert!(!config.native_events.enabled);
+        assert!(!config.home_assistant.enabled);
+        assert!(!config.home_assistant.allow_insecure_http);
     }
 
     #[test]
