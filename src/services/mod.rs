@@ -1,6 +1,7 @@
 pub mod airplay;
 pub mod audio;
 pub mod connect;
+pub mod home_assistant;
 pub mod led;
 pub mod media;
 pub mod monitor;

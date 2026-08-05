@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::base::AppError;
+use crate::services::home_assistant::{ask_xiaoai, speak_text, HomeAssistantService, RouteOutcome};
 use crate::services::media::MediaBus;
 use crate::services::monitor::file::FileMonitorEvent;
 use crate::services::music::{MusicCommand, MusicCommandParser, MusicService};
@@ -15,6 +16,7 @@ pub struct RoutingService {
     parser: MusicCommandParser,
     media: MediaBus,
     native_stop_command: String,
+    home_assistant: Option<HomeAssistantService>,
     dialogs: Arc<Mutex<DialogCache>>,
 }
 
@@ -28,6 +30,7 @@ struct DialogCache {
 struct DialogState {
     routed_asr: bool,
     claimed_music: bool,
+    external_pending: bool,
 }
 
 impl RoutingService {
@@ -36,12 +39,14 @@ impl RoutingService {
         parser: MusicCommandParser,
         media: MediaBus,
         native_stop_command: String,
+        home_assistant: Option<HomeAssistantService>,
     ) -> Self {
         Self {
             music,
             parser,
             media,
             native_stop_command,
+            home_assistant,
             dialogs: Arc::new(Mutex::new(DialogCache::default())),
         }
     }
@@ -85,6 +90,18 @@ impl RoutingService {
                         // Xiaomi's queue after the local command has already run.
                         self.stop_native_music();
                         self.music.execute(command);
+                    } else if self
+                        .home_assistant
+                        .as_ref()
+                        .is_some_and(HomeAssistantService::routing_enabled)
+                    {
+                        self.dialogs
+                            .lock()
+                            .expect("dialog cache poisoned")
+                            .state_mut(dialog_id)
+                            .external_pending = true;
+                        println!("[routing] sending ASR to Home Assistant: {text:?}");
+                        self.route_home_assistant(text);
                     }
                 }
             }
@@ -92,6 +109,17 @@ impl RoutingService {
         }
 
         if namespace == "Dialog" && name == "Finish" {
+            let external_pending = self
+                .dialogs
+                .lock()
+                .expect("dialog cache poisoned")
+                .states
+                .get(dialog_id)
+                .is_some_and(|state| state.external_pending);
+            if external_pending {
+                println!("[routing] deferring wake completion for external route");
+                return Ok(());
+            }
             self.media.set_wake_active(false);
             self.music.dialog_finished();
             return Ok(());
@@ -160,6 +188,79 @@ impl RoutingService {
                 Err(err) => eprintln!("[routing] native stop command failed: {err}"),
             }
         });
+    }
+
+    fn route_home_assistant(&self, text: String) {
+        let Some(home_assistant) = self.home_assistant.clone() else {
+            return;
+        };
+        let media = self.media.clone();
+        let music = self.music.clone();
+        tokio::spawn(async move {
+            let awaiting_followup_dialog = match home_assistant.route(&text).await {
+                RouteOutcome::Handled { speech } => {
+                    println!("[ha] handled: {text:?}");
+                    if home_assistant.speak_response() {
+                        if let Some(speech) = speech {
+                            start_native_tts(&speech).await
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                RouteOutcome::Fallback { reason } => {
+                    eprintln!("[ha] falling back to XiaoAI: {reason}");
+                    if home_assistant.fallback_to_xiaoai() {
+                        start_xiaoai_fallback(&text).await
+                    } else {
+                        false
+                    }
+                }
+                RouteOutcome::Failed { reason } => {
+                    eprintln!("[ha] request not retried through XiaoAI: {reason}");
+                    let speech = home_assistant.failure_speech();
+                    if speech.is_empty() {
+                        false
+                    } else {
+                        start_native_tts(speech).await
+                    }
+                }
+            };
+            if !awaiting_followup_dialog {
+                media.set_wake_active(false);
+                music.dialog_finished();
+            }
+        });
+    }
+}
+
+async fn start_xiaoai_fallback(text: &str) -> bool {
+    match ask_xiaoai(text).await {
+        Ok(true) => true,
+        Ok(false) => {
+            eprintln!("[ha] XiaoAI fallback was rejected");
+            false
+        }
+        Err(err) => {
+            eprintln!("[ha] XiaoAI fallback failed: {err:#}");
+            false
+        }
+    }
+}
+
+async fn start_native_tts(text: &str) -> bool {
+    match speak_text(text).await {
+        Ok(true) => true,
+        Ok(false) => {
+            eprintln!("[ha] native TTS was rejected");
+            false
+        }
+        Err(err) => {
+            eprintln!("[ha] native TTS failed: {err:#}");
+            false
+        }
     }
 }
 
