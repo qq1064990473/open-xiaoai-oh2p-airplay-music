@@ -395,6 +395,8 @@ pub struct HomeAssistantConfig {
     pub language: String,
     pub connect_timeout_ms: u64,
     pub request_timeout_ms: u64,
+    pub startup_retry_attempts: u32,
+    pub startup_retry_interval_ms: u64,
     pub fallback_to_xiaoai: bool,
     pub fallback_on_timeout: bool,
     pub speak_response: bool,
@@ -414,6 +416,8 @@ impl Default for HomeAssistantConfig {
             language: "zh-CN".into(),
             connect_timeout_ms: 500,
             request_timeout_ms: 1_500,
+            startup_retry_attempts: 60,
+            startup_retry_interval_ms: 1_000,
             fallback_to_xiaoai: true,
             fallback_on_timeout: false,
             speak_response: true,
@@ -445,6 +449,8 @@ mod tests {
         assert!(!config.native_events.enabled);
         assert!(!config.home_assistant.enabled);
         assert!(!config.home_assistant.allow_insecure_http);
+        assert_eq!(config.home_assistant.startup_retry_attempts, 60);
+        assert_eq!(config.home_assistant.startup_retry_interval_ms, 1_000);
     }
 
     #[test]

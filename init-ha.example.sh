@@ -51,7 +51,6 @@ while :; do
     child=$!
     lab_enabled=0
 
-    waited=0
     while kill -0 "$child" 2>/dev/null; do
         if [ -f "$READY" ] && [ ! -f "$PNS_RUNTIME" ]; then
             : > "$PNS_RUNTIME"
@@ -60,8 +59,6 @@ while :; do
             echo "[init] native ASR-only mode enabled"
             break
         fi
-        waited=$((waited + 1))
-        [ "$waited" -ge 30 ] && break
         sleep 1
     done
 

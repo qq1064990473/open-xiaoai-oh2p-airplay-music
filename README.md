@@ -18,6 +18,7 @@
 - 复用小米原生唤醒、AEC、降噪、VAD 和云端 ASR，将最终文字直接提交给 HA Conversation。
 - HA 无法匹配、鉴权失败或连接失败时，将原 ASR 文字回退给小爱原生 NLP；超时默认不重复执行，避免同一设备动作触发两次。
 - HA 鉴权成功前不进入 ASR-only；Client 异常退出或重启后自动恢复原生小爱，避免音箱失去应答能力。
+- 开机时 HA 健康检查会重试暂时性的 DNS、连接、超时和 HTTP 5xx，避免网络尚未就绪导致 HA 在本进程内永久禁用。
 - 不修改固件分区、麦克风通道或 ALSA 配置。
 
 ## 下载
@@ -25,13 +26,13 @@
 OH2P / ARMv7 / glibc 2.25 二进制：
 
 ```text
-dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260805
+dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260806
 ```
 
 SHA-256：
 
 ```text
-363be062b867cf2ccdb4b12d5337f4434a12b976efecee413f22e7a0cda811ef
+b402726658ce41954dc94f7985788975bd751aab7c2dc30d6cae22a2fce94853
 ```
 
 HA 版本的启用、测试和回滚步骤见 [DEPLOY-HA-OH2P.md](DEPLOY-HA-OH2P.md)。旧媒体版本的手动部署说明仍保留在 [DEPLOY-OH2P.md](DEPLOY-OH2P.md)。

@@ -120,6 +120,8 @@
     "language": "zh-CN",
     "connect_timeout_ms": 500,
     "request_timeout_ms": 1500,
+    "startup_retry_attempts": 60,
+    "startup_retry_interval_ms": 1000,
     "fallback_to_xiaoai": true,
     "fallback_on_timeout": false,
     "speak_response": true,

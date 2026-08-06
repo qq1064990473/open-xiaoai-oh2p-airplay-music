@@ -52,24 +52,45 @@ impl HomeAssistantService {
             conversation_url: format!("{base_url}/api/conversation/process"),
             api_url: format!("{base_url}/api/"),
         };
-        service.health_check().await?;
+        service.wait_until_ready().await?;
         Ok(Some(service))
     }
 
-    async fn health_check(&self) -> Result<()> {
-        let response = self
+    async fn wait_until_ready(&self) -> Result<()> {
+        let attempts = self.config.startup_retry_attempts.max(1);
+        let retry_delay = Duration::from_millis(self.config.startup_retry_interval_ms.max(100));
+
+        for attempt in 1..=attempts {
+            match self.health_check().await {
+                Ok(status) if status.is_success() => return Ok(()),
+                Ok(status) if status.is_server_error() && attempt < attempts => {
+                    eprintln!(
+                        "[ha] startup health check {attempt}/{attempts} returned {status}; retrying"
+                    );
+                }
+                Ok(status) => anyhow::bail!("HA health check returned {status}"),
+                Err(err)
+                    if (err.is_connect() || err.is_timeout()) && attempt < attempts =>
+                {
+                    eprintln!(
+                        "[ha] startup health check {attempt}/{attempts} failed: {err}; retrying"
+                    );
+                }
+                Err(err) => return Err(err).context("HA health check failed"),
+            }
+            tokio::time::sleep(retry_delay).await;
+        }
+        unreachable!("startup health check loop always returns")
+    }
+
+    async fn health_check(&self) -> reqwest::Result<StatusCode> {
+        self
             .client
             .get(&self.api_url)
             .bearer_auth(&self.token)
             .send()
             .await
-            .context("HA health check failed")?;
-        anyhow::ensure!(
-            response.status().is_success(),
-            "HA health check returned {}",
-            response.status()
-        );
-        Ok(())
+            .map(|response| response.status())
     }
 
     pub async fn route(&self, text: &str) -> RouteOutcome {
