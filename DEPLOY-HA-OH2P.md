@@ -4,10 +4,10 @@
 
 ## 文件
 
-- Client：`dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260806`
-- 示例配置：`dist/client-airplay-music-ha-retry.example.json`
-- 启动脚本：`dist/init-ha-oh2p-20260806.sh`
-- SHA-256：`b402726658ce41954dc94f7985788975bd751aab7c2dc30d6cae22a2fce94853`
+- Client：`dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260814`
+- 示例配置：`dist/client-airplay-music-ha-qq-retry.example.json`
+- 启动脚本：`dist/init-ha-oh2p-20260814.sh`
+- SHA-256：`38074109a9e3dc8239992ccc0422e7a4b8011004b6324aa5fcbd15b215c0d6c8`
 
 目标路径：
 

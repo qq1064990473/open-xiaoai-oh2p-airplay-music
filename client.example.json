@@ -44,6 +44,7 @@
       "timeout_ms": 5000,
       "max_retries": 3,
       "retry_delay_ms": 500,
+      "empty_result_retries": 2,
       "random_toplist_id": 4
     },
     "play_url": {

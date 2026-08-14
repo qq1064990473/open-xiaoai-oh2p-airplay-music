@@ -186,6 +186,7 @@ pub struct MusicSearchConfig {
     pub timeout_ms: u64,
     pub max_retries: usize,
     pub retry_delay_ms: u64,
+    pub empty_result_retries: usize,
     pub random_toplist_id: u64,
 }
 
@@ -198,6 +199,7 @@ impl Default for MusicSearchConfig {
             timeout_ms: 5_000,
             max_retries: 3,
             retry_delay_ms: 500,
+            empty_result_retries: 2,
             random_toplist_id: 4,
         }
     }
@@ -441,6 +443,7 @@ mod tests {
         assert_eq!(config.airplay.output.device, "default");
         assert!(!config.music.enabled);
         assert_eq!(config.music.search.max_retries, 3);
+        assert_eq!(config.music.search.empty_result_retries, 2);
         assert!(config.music.play_url.backup_enabled);
         assert_eq!(config.music.play_url.backup_json_path, "data.url");
         assert_eq!(config.music.play_url.primary_failure_cooldown_ms, 60_000);

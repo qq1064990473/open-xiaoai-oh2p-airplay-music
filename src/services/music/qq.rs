@@ -63,27 +63,50 @@ impl QqMusic {
     pub async fn search_songs(&self, query: &str, page: usize, limit: usize) -> Result<Vec<Song>> {
         let started = Instant::now();
         let body = search_body(query, 0, page, limit);
-        let data = self.post_musicu(body).await?;
-        let items = data
-            .pointer("/music.search.SearchCgiService/data/body/song/list")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let songs = items
-            .iter()
-            .map(parse_song)
-            .filter(|song| !song.mid.is_empty())
-            .collect::<Vec<_>>();
-        println!(
-            "[music-api] QQ song search: query={query:?}, page={page}, results={}, elapsed_ms={}",
-            songs.len(),
-            started.elapsed().as_millis()
-        );
-        Ok(songs)
+        let empty_retries = if page <= 1 {
+            self.search.empty_result_retries
+        } else {
+            0
+        };
+
+        for semantic_attempt in 0..=empty_retries {
+            let data = self.post_musicu(body.clone()).await?;
+            validate_musicu_codes(&data, "music.search.SearchCgiService")?;
+            let items = search_song_items(&data);
+            let songs = items
+                .into_iter()
+                .flatten()
+                .map(parse_song)
+                .filter(|song| !song.mid.is_empty())
+                .collect::<Vec<_>>();
+
+            if !songs.is_empty() || semantic_attempt == empty_retries {
+                println!(
+                    "[music-api] QQ song search: query={query:?}, page={page}, results={}, elapsed_ms={}",
+                    songs.len(),
+                    started.elapsed().as_millis()
+                );
+                return Ok(songs);
+            }
+
+            let list_present = search_song_items(&data).is_some();
+            let suggestion = search_suggestion(&data).unwrap_or("-");
+            eprintln!(
+                "[music-api] QQ song search returned no usable songs; query={query:?}, page={page}, attempt={}/{}, top_code={}, service_code={}, list_present={list_present}, suggestion={suggestion:?}; retrying",
+                semantic_attempt + 1,
+                empty_retries + 1,
+                response_code(&data).unwrap_or(-1),
+                service_code(&data, "music.search.SearchCgiService").unwrap_or(-1),
+            );
+            sleep(Duration::from_millis(self.search.retry_delay_ms)).await;
+        }
+
+        unreachable!("QQ search semantic retry loop always returns")
     }
 
     pub async fn search_playlist(&self, query: &str) -> Result<Option<(String, String)>> {
         let data = self.post_musicu(search_body(query, 3, 1, 10)).await?;
+        validate_musicu_codes(&data, "music.search.SearchCgiService")?;
         let item = data
             .pointer("/music.search.SearchCgiService/data/body/songlist/list")
             .and_then(Value::as_array)
@@ -108,6 +131,7 @@ impl QqMusic {
             }
         });
         let data = self.post_musicu(body).await?;
+        validate_musicu_codes(&data, "req_1")?;
         let items = data
             .pointer("/req_1/data/songlist")
             .and_then(Value::as_array)
@@ -129,6 +153,7 @@ impl QqMusic {
             }
         });
         let data = self.post_musicu(body).await?;
+        validate_musicu_codes(&data, "req_1")?;
         let items = data
             .pointer("/req_1/data/songInfoList")
             .and_then(Value::as_array)
@@ -436,6 +461,46 @@ fn search_body(query: &str, search_type: u8, page: usize, limit: usize) -> Value
     }})
 }
 
+fn response_code(data: &Value) -> Option<i64> {
+    integer_value(data.get("code")?)
+}
+
+fn service_code(data: &Value, service: &str) -> Option<i64> {
+    integer_value(data.get(service)?.get("code")?)
+}
+
+fn integer_value(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|code| i64::try_from(code).ok()))
+}
+
+fn validate_musicu_codes(data: &Value, service: &str) -> Result<()> {
+    let top_code = response_code(data).context("QQ Music response is missing top-level code")?;
+    anyhow::ensure!(
+        top_code == 0,
+        "QQ Music top-level business code: {top_code}"
+    );
+    let service_code = service_code(data, service)
+        .with_context(|| format!("QQ Music response is missing {service} code"))?;
+    anyhow::ensure!(
+        service_code == 0,
+        "QQ Music {service} business code: {service_code}"
+    );
+    Ok(())
+}
+
+fn search_song_items(data: &Value) -> Option<&Vec<Value>> {
+    data.pointer("/music.search.SearchCgiService/data/body/song/list")
+        .and_then(Value::as_array)
+}
+
+fn search_suggestion(data: &Value) -> Option<&str> {
+    data.pointer("/music.search.SearchCgiService/data/body/qc/0/word")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
 fn parse_song(item: &Value) -> Song {
     Song {
         mid: value_string(&item["mid"]),
@@ -493,6 +558,44 @@ mod tests {
             json_dot_path(&json!({"data":{"url":"x"}}), "data.url").and_then(Value::as_str),
             Some("x")
         );
+    }
+
+    #[test]
+    fn parses_musicu_search_response() {
+        let data = json!({
+            "code": 0,
+            "music.search.SearchCgiService": {
+                "code": 0,
+                "data": {"body": {"song": {"list": [
+                    {"mid":"0039MnYb0qxYhV","title":"晴天","singer":[{"name":"周杰伦"}]}
+                ]}}}
+            }
+        });
+        validate_musicu_codes(&data, "music.search.SearchCgiService").unwrap();
+        let songs = search_song_items(&data)
+            .unwrap()
+            .iter()
+            .map(parse_song)
+            .collect::<Vec<_>>();
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].title, "晴天");
+    }
+
+    #[test]
+    fn distinguishes_missing_and_empty_search_lists() {
+        let missing =
+            json!({"code":0,"music.search.SearchCgiService":{"code":0,"data":{"body":{}}}});
+        let empty = json!({"code":0,"music.search.SearchCgiService":{"code":0,"data":{"body":{"song":{"list":[]}}}}});
+        assert!(search_song_items(&missing).is_none());
+        assert!(search_song_items(&empty).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_nonzero_musicu_business_codes() {
+        let top = json!({"code":1001,"req_1":{"code":0}});
+        let service = json!({"code":0,"req_1":{"code":2001}});
+        assert!(validate_musicu_codes(&top, "req_1").is_err());
+        assert!(validate_musicu_codes(&service, "req_1").is_err());
     }
 
     #[test]
