@@ -38,6 +38,8 @@ SHA-256：
 
 HA 版本的启用、测试和回滚步骤见 [DEPLOY-HA-OH2P.md](DEPLOY-HA-OH2P.md)。旧媒体版本的手动部署说明仍保留在 [DEPLOY-OH2P.md](DEPLOY-OH2P.md)。
 
+`client.example.json` 内含可被 Client 安全忽略的中文 `_说明` 字段，仍是可直接使用的标准 JSON。通过 SSH 注入最终 ASR 文字进行远程分路测试的方法见 [SSH-ROUTING-TEST.md](SSH-ROUTING-TEST.md)。
+
 ## 配置
 
 将 `client.example.json` 上传为 `/data/open-xiaoai/client.json`，按需修改 AirPlay 名称、硬件地址、音乐参数和 `home_assistant`：

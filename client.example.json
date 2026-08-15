@@ -1,6 +1,8 @@
 {
+  "_说明": "这是可直接由 Client 读取的标准 JSON。所有以下划线开头的中文说明字段都会被当前版本忽略，可按需保留。",
   "server_url": "ws://127.0.0.1:4399",
   "airplay": {
+    "_说明": "AirPlay 1 服务配置。修改 name 可改变手机上显示的接收器名称。",
     "enabled": true,
     "name": "Xiaomi 智能音箱 Pro AirPlay",
     "port": 5000,
@@ -8,6 +10,7 @@
     "hwaddr": "02:4f:48:32:50:01",
     "max_clients": 1,
     "output": {
+      "_说明": "OH2P 使用 aplay 输出；除非已确认声卡设备名称，否则保持默认值。",
       "backend": "aplay",
       "aplay_path": "/usr/bin/aplay",
       "device": "default",
@@ -15,14 +18,17 @@
       "extra_args": []
     },
     "interruption": {
+      "_说明": "小爱被唤醒时降低 AirPlay 音量，duck_gain 为原音量比例。",
       "mode": "duck",
       "duck_gain": 0.25
     }
   },
   "music": {
+    "_说明": "固定词本地音乐路由，不经过 LLM。搜索只缓存歌曲 MID，播放前才获取实际 URL。",
     "enabled": true,
     "route_mode": "fixed_rules",
     "commands": {
+      "_说明": "语音关键词表。数组内可以添加自己的同义表达；短控制词仅在本地音乐会话活跃时接管。",
       "required_prefixes": [],
       "explicit_prefixes": ["本地音乐", "播放歌曲", "音乐"],
       "play_words": ["来一首", "我想听", "播放", "放"],
@@ -38,6 +44,7 @@
       "repeat_all_words": ["列表循环"]
     },
     "search": {
+      "_说明": "QQ MusicU 仅用于搜索歌曲信息和 MID。empty_result_retries 用于长时间待机后首次空响应。",
       "provider": "qq_music",
       "api_url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
       "page_size": 20,
@@ -48,6 +55,7 @@
       "random_toplist_id": 4
     },
     "play_url": {
+      "_说明": "播放地址顺序为内存缓存、haitangw 主接口、MusicFree 备用接口。第三方接口可能失效。",
       "primary_url_template": "https://music.haitangw.cc/music/qq_song_kw.php?id={mid}",
       "primary_json_path": "data.url",
       "primary_min_interval_ms": 3000,
@@ -61,6 +69,7 @@
       "cache_max_entries": 128
     },
     "player": {
+      "_说明": "OH2P 使用原生 miplayer。native_stop_command 用于阻止小米原生音乐与本地音乐同时播放。",
       "path": "/usr/bin/miplayer",
       "log_path": "/tmp/open-xiaoai-music-player.log",
       "start_timeout_ms": 1500,
@@ -70,6 +79,7 @@
       "native_stop_command": "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"common\",\"action\":\"pause\"}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true"
     },
     "queue": {
+      "_说明": "播放队列和自动续播策略。same_artist 表示单曲后继续搜索同歌手歌曲。",
       "autoplay_count": 10,
       "after_single_song": "same_artist",
       "default_order": "sequential",
@@ -78,16 +88,19 @@
       "on_url_failure": "skip_to_next"
     },
     "interruption": {
+      "_说明": "唤醒时暂停网络音乐，当前对话结束后恢复。",
       "on_wake": "pause",
       "resume_on_dialog_finish": true
     }
   },
   "audio_policy": {
+    "_说明": "AirPlay 与网络音乐互斥策略。连接 AirPlay 时暂停网络音乐，断开后恢复。",
     "on_airplay_start": "pause_music",
     "on_airplay_end": "resume_music",
     "music_while_airplay": "reject"
   },
   "led": {
+    "_说明": "OH2P 已验证可用的是 14 号原生灯效；L=8 自定义 RGB 在当前固件上不生效。",
     "enabled": true,
     "update_hz": 2,
     "min_db": -48.0,
@@ -104,6 +117,7 @@
     "suspend_during_wakeup": true
   },
   "native_events": {
+    "_说明": "监听 UBUS 的实体播放键和 LED 关闭事件，用于本地音乐暂停/恢复及灯效恢复。",
     "enabled": true,
     "monitor_command": "ubus monitor",
     "button_sequence_window_ms": 1500,
@@ -114,6 +128,8 @@
     "led_restore_delay_ms": 250
   },
   "home_assistant": {
+    "_说明": "启用后，非音乐的最终 ASR 文本先交给 HA Conversation，无法匹配时按配置回退给小爱。",
+    "_安全说明": "HA 长期令牌必须放在 token_file 指定的独立文件中，不要写入本 JSON。公网地址应使用 HTTPS。",
     "enabled": false,
     "base_url": "https://homeassistant.example.com:8123",
     "token_file": "/data/open-xiaoai/ha.token",
