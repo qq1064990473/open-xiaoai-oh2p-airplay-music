@@ -3,7 +3,7 @@
 - 构建日期：2026-08-14（Asia/Shanghai）
 - 上游项目：`idootop/open-xiaoai`，`packages/client-rust`
 - 上游基线提交：`bc3396c64e2a435f354eb5cb12a203981f1fe422`
-- 本版本：`open-xiaoai 1.4.0-airplay-music-ha.3`
+- 本版本：`open-xiaoai 1.4.0-airplay-music-ha.4-kuwo`
 - 目标设备：OH2P / Xiaomi 智能音箱 Pro
 - Rust：1.96.0
 - Zig：0.16.0
