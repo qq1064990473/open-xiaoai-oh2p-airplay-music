@@ -1,6 +1,6 @@
 # AirPlay + Music + HA Client 构建记录
 
-- 构建日期：2026-08-14（Asia/Shanghai）
+- 构建日期：2026-09-11（Asia/Shanghai）
 - 上游项目：`idootop/open-xiaoai`，`packages/client-rust`
 - 上游基线提交：`bc3396c64e2a435f354eb5cb12a203981f1fe422`
 - 本版本：`open-xiaoai 1.4.0-airplay-music-ha.4-kuwo`
@@ -25,9 +25,9 @@ cargo zigbuild --release \
 - PIE，动态解释器 `/lib/ld-linux-armhf.so.3`。
 - 最高引用符号版本为 `GLIBC_2.25`。
 - 动态依赖仅为 `libm.so.6`、`libc.so.6`、`libpthread.so.0`、`libdl.so.2`。
-- 发布文件：`client-airplay-music-ha-oh2p-armv7-glibc2.25-20260814`。
-- 发布二进制大小：3,227,024 bytes。
-- SHA-256：`38074109a9e3dc8239992ccc0422e7a4b8011004b6324aa5fcbd15b215c0d6c8`。
+- 发布文件：`client-airplay-music-ha-kuwo-oh2p-armv7-glibc2.25-20260911`。
+- 发布二进制大小：3,242,936 bytes。
+- SHA-256：发布时见 `dist/SHA256SUMS-v1.4.0-airplay-music-ha.4-kuwo.txt`。
 - QQ MusicU 搜索响应会校验顶层 `code` 和服务 `code`，避免把业务错误误报成无结果。
 - 第一页返回空或缺失的歌曲列表时默认重试两次，每次间隔 500 ms；后续分页保持无结果即结束，避免无意义请求。
 - 空结果重试会记录尝试次数、业务码、列表是否存在及 `qc` 建议词，不写入完整响应体。

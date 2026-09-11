@@ -76,11 +76,11 @@ impl QqMusic {
                     "[music-api] Kuwo song search failed; query={query:?}; falling back to QQ: {err:#}"
                 ),
             }
+            anyhow::ensure!(
+                matches!(self.search.fallback_provider.as_str(), "qq_music" | "qq_music_musicu"),
+                "Kuwo search returned no usable results and no QQ fallback provider is configured"
+            );
         }
-        anyhow::ensure!(
-            self.search.provider != "kuwo" && self.search.fallback_provider != "",
-            "Kuwo search returned no usable results and no fallback provider is configured"
-        );
         self.search_qq_songs(query, page, limit).await
     }
 
