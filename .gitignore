@@ -1,0 +1,13 @@
+.idea
+.clwb
+/target/
+/client.json
+/boot.sh
+/init.sh
+/dist/*
+!/dist/client-airplay-music-backup-led-oh2p-armv7-glibc2.25-20260729
+!/dist/client-airplay-music-backup-led.example.json
+!/dist/BUILD-INFO-backup-led.md
+!/dist/DEPLOY-OH2P-backup-led.md
+!/dist/MUSIC-IMPLEMENTATION-backup-led.md
+!/dist/SHA256SUMS-backup-led.txt
