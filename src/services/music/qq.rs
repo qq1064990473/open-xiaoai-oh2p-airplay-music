@@ -93,7 +93,11 @@ impl QqMusic {
             .query(&[
                 ("client", "kt"), ("all", query), ("pn", &page.to_string()),
                 ("rn", &limit.clamp(1, 50).to_string()), ("ft", "music"),
-                ("encoding", "utf8"), ("rformat", "json"), ("mobi", "1"),
+                ("uid", &self.search.kuwo_uid.to_string()),
+                ("ver", &self.search.kuwo_version), ("vipver", "1"),
+                ("cluster", "0"), ("strategy", "2012"),
+                ("encoding", "utf8"), ("rformat", "json"), ("vermerge", "1"),
+                ("mobi", "1"),
             ])
             .send()
             .await?

@@ -186,6 +186,9 @@ pub struct MusicSearchConfig {
     pub fallback_provider: String,
     /// Kuwo's public search endpoint. It returns a `MUSIC_<numeric rid>` value.
     pub kuwo_api_url: String,
+    /// Parameters used by Kuwo's player search strategy to improve canonical-song ranking.
+    pub kuwo_uid: u64,
+    pub kuwo_version: String,
     /// QQ MusicU endpoint, retained for fallback searches, playlists and charts.
     pub api_url: String,
     pub page_size: usize,
@@ -202,8 +205,10 @@ impl Default for MusicSearchConfig {
             provider: "kuwo".into(),
             fallback_provider: "qq_music".into(),
             kuwo_api_url: "https://search.kuwo.cn/r.s".into(),
+            kuwo_uid: 2_574_109_560,
+            kuwo_version: "kwplayer_ar_8.5.4.2".into(),
             api_url: "https://u.y.qq.com/cgi-bin/musicu.fcg".into(),
-            page_size: 20,
+            page_size: 30,
             timeout_ms: 5_000,
             max_retries: 3,
             retry_delay_ms: 500,

@@ -64,7 +64,9 @@ HA 长期访问令牌只存放在音箱的 `/data/open-xiaoai/ha.token`，不要
 
 ## 音乐接口
 
-普通“播放歌曲 / 歌手的歌”请求默认先查询酷我，成功后的歌曲以 `kw:<数字RID>`
+普通“播放歌曲 / 歌手的歌”请求默认先查询酷我播放器策略接口，使用与 `kw.js` 相同的
+`client=kt`、`uid`、`ver`、`vipver`、`ft=music`、`cluster`、`strategy=2012`、`vermerge=1`
+及 30 条分页参数改善原唱排序；成功后的歌曲以 `kw:<数字RID>`
 进入队列，并按“长青酷我 → 念心酷我”顺序获取直链；酷我搜索异常或无结果才回退
 QQ MusicU（`qq:<MID>`）。两类 ID 不互通。歌单和随机榜单目前仍由 QQ MusicU 提供。
 可在 `client.controlfix.json` 的 `music.search` 与 `music.play_url` 中修改接口、顺序或关闭某个源。
