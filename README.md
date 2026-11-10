@@ -7,6 +7,10 @@
 - AirPlay 服务独立于 WebSocket 重连循环，Server 断线不影响 AirPlay。
 - AIVS 最终 ASR 固定规则识别歌曲、歌手、歌单及播放控制。
 - 支持下一首、上一首、暂停、恢复、停止、随机播放、单曲循环、列表循环和自然结束续播。
+- 酷我优先覆盖歌曲、歌手、歌单和随机榜单；酷我目录无结果或接口失败时回退 QQ。
+- 歌手队列与单曲后的同歌手续播会在酷我搜索结果无法匹配目标歌手时，再明确尝试 QQ，避免“接口有返回但队列为空”。
+- 酷我歌曲取链的两个接口都失败时，会按歌名/歌手在 QQ 重新匹配同名歌曲，再使用 QQ 的主/备用取链接口。
+- 随机播放是持续电台：按批获取、低水位后台补队列、榜单翻页并去重；榜单一轮结束后重新开始，不会播完首批就停。
 - QQ Music 搜索只提前缓存歌曲 MID；歌曲即将播放时才解析 URL。
 - QQ Music 首页搜索若收到 HTTP 200 但歌曲列表为空或缺失，会进行两次有限重试，并校验顶层及服务业务码。
 - URL 按 MID 在内存中缓存，上一首、循环和短时间重播不重复取链。
@@ -24,7 +28,15 @@
 
 ## 下载
 
-OH2P / ARMv7 / glibc 2.25 二进制：
+最新版本：`v1.4.0-airplay-music-ha.6-kuwo-radio`（OH2P / ARMv7 / glibc 2.25）
+
+```text
+dist/client-airplay-music-ha-kuwo-radio-oh2p-armv7-glibc2.25
+```
+
+SHA-256：见 [本版本校验和](dist/SHA256SUMS-v1.4.0-airplay-music-ha.6-kuwo-radio.txt)。
+
+上一版 HA 客户端仍保留在下方存档链接：
 
 ```text
 dist/client-airplay-music-ha-oh2p-armv7-glibc2.25-20260814
@@ -64,9 +76,12 @@ HA 长期访问令牌只存放在音箱的 `/data/open-xiaoai/ha.token`，不要
 
 ## 音乐接口
 
-普通“播放歌曲 / 歌手的歌”请求默认先查询酷我，成功后的歌曲以 `kw:<数字RID>`
+普通“播放歌曲 / 歌手的歌”请求默认先查询酷我播放器策略接口，使用与 `kw.js` 相同的
+`client=kt`、`uid`、`ver`、`vipver`、`ft=music`、`cluster`、`strategy=2012`、`vermerge=1`
+及 30 条分页参数改善原唱排序；成功后的歌曲以 `kw:<数字RID>`
 进入队列，并按“长青酷我 → 念心酷我”顺序获取直链；酷我搜索异常或无结果才回退
-QQ MusicU（`qq:<MID>`）。两类 ID 不互通。歌单和随机榜单目前仍由 QQ MusicU 提供。
+QQ MusicU（`qq:<MID>`）。两类 ID 不互通。歌单会先在酷我搜索并分页取曲目，随机电台优先读取酷我热歌榜分页；两者失败或无有效结果时才回退 QQ。
+若酷我歌曲播放链接无法解析，Client 会用歌曲名和歌手重新查询 QQ，只接受同名结果并优先匹配相同歌手，再走 QQ 取链，避免把 Kuwo RID 误用作 QQ MID。
 可在 `client.controlfix.json` 的 `music.search` 与 `music.play_url` 中修改接口、顺序或关闭某个源。
 
 QQ Music MusicU 只用于搜索 MID。播放 URL 获取顺序：

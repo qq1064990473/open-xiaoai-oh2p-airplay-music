@@ -1,6 +1,6 @@
 [package]
 name = "open-xiaoai"
-version = "1.4.0-airplay-music-ha.4-kuwo"
+version = "1.4.0-airplay-music-ha.6-kuwo-radio"
 edition = "2021"
 
 [profile.release]

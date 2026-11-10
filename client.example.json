@@ -44,20 +44,25 @@
       "repeat_all_words": ["列表循环"]
     },
     "search": {
-      "_说明": "默认先搜索酷我，搜索异常或没有结果时自动回退 QQ MusicU。内部会分别保存 kw:数字RID 与 qq:MID，不能互换。empty_result_retries 用于 QQ 长时间待机后首次空响应。",
+      "_说明": "所有目录类播放都按 provider 优先；酷我搜歌手/歌曲/歌单/随机榜单，失败或无有效结果时回退 QQ MusicU。酷我与 QQ 的歌曲 ID 及取链流程严格区分。",
       "provider": "kuwo",
       "fallback_provider": "qq_music",
       "kuwo_api_url": "https://search.kuwo.cn/r.s",
+      "kuwo_uid": 2574109560,
+      "kuwo_version": "kwplayer_ar_8.5.4.2",
       "api_url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
-      "page_size": 20,
+      "page_size": 30,
       "timeout_ms": 5000,
       "max_retries": 3,
       "retry_delay_ms": 500,
       "empty_result_retries": 2,
-      "random_toplist_id": 4
+      "random_toplist_id": 4,
+      "kuwo_random_toplist_id": 16,
+      "kuwo_toplist_detail_api_url": "https://kbangserver.kuwo.cn/ksong.s",
+      "kuwo_playlist_info_api_url": "https://m.kuwo.cn/newh5app/wapi/api/www/playlist/playListInfo"
     },
     "play_url": {
-      "_说明": "酷我歌曲先用长青酷我直链，失败后用念心酷我；接口本身直接返回音频流。QQ 只在酷我搜索失败时作为搜索备用，并使用下方旧 QQ 取链字段。第三方接口可能失效。",
+      "_说明": "酷我歌曲先用长青酷我直链，失败后用念心酷我；两者失败则按歌名/歌手回退 QQ 搜索并使用 QQ 取链。第三方接口可能失效。",
       "kuwo_primary_enabled": true,
       "kuwo_primary_url_template": "https://musicapi.haitangw.net/music/kw.php?type=mp3&id={id}&level={level}",
       "kuwo_backup_enabled": true,
@@ -86,8 +91,10 @@
       "native_stop_command": "killall tts_play.sh 2>/dev/null || true; mphelper pause 2>/dev/null || true; ubus call mediaplayer media_control '{\"player\":\"mediaplayer\",\"action\":\"pause\",\"volume\":0}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"common\",\"action\":\"pause\"}' >/dev/null 2>&1 || true; ubus call mediaplayer player_play_operation '{\"media\":\"app_ios\",\"action\":\"stop\"}' >/dev/null 2>&1 || true"
     },
     "queue": {
-      "_说明": "播放队列和自动续播策略。same_artist 表示单曲后继续搜索同歌手歌曲。",
+      "_说明": "播放队列和自动续播策略。随机电台每批取 random_batch_size 首，队列少于等于 random_prefetch_threshold 首时后台补充，不会播完一批就停止。",
       "autoplay_count": 10,
+      "random_batch_size": 10,
+      "random_prefetch_threshold": 3,
       "after_single_song": "same_artist",
       "default_order": "sequential",
       "repeat_mode": "off",
