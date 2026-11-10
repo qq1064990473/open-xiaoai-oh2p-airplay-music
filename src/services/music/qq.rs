@@ -26,6 +26,7 @@ pub struct QqMusic {
     search: MusicSearchConfig,
     play_url: MusicPlayUrlConfig,
     play_url_state: Arc<Mutex<PlayUrlState>>,
+    random_state: Arc<Mutex<RandomState>>,
 }
 
 #[derive(Debug, Default)]
@@ -41,15 +42,36 @@ struct CachedUrl {
     expires_at: Instant,
 }
 
+#[derive(Debug, Default)]
+struct RandomState {
+    kuwo_page: usize,
+    kuwo_cycle: u64,
+    kuwo_blocked_until: Option<Instant>,
+    qq_offset: usize,
+    qq_cycle: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RandomSongBatch {
+    pub cycle_key: String,
+    pub songs: Vec<Song>,
+}
+
 impl QqMusic {
     pub fn new(search: MusicSearchConfig, play_url: MusicPlayUrlConfig) -> Result<Self> {
         anyhow::ensure!(
-            matches!(search.provider.as_str(), "kuwo" | "qq_music" | "qq_music_musicu"),
+            matches!(
+                search.provider.as_str(),
+                "kuwo" | "qq_music" | "qq_music_musicu"
+            ),
             "unsupported music search provider: {}",
             search.provider
         );
         anyhow::ensure!(
-            matches!(search.fallback_provider.as_str(), "" | "qq_music" | "qq_music_musicu"),
+            matches!(
+                search.fallback_provider.as_str(),
+                "" | "qq_music" | "qq_music_musicu"
+            ),
             "unsupported music fallback provider: {}",
             search.fallback_provider
         );
@@ -62,6 +84,7 @@ impl QqMusic {
             search,
             play_url,
             play_url_state: Arc::new(Mutex::new(PlayUrlState::default())),
+            random_state: Arc::new(Mutex::new(RandomState::default())),
         })
     }
 
@@ -77,11 +100,37 @@ impl QqMusic {
                 ),
             }
             anyhow::ensure!(
-                matches!(self.search.fallback_provider.as_str(), "qq_music" | "qq_music_musicu"),
+                matches!(
+                    self.search.fallback_provider.as_str(),
+                    "qq_music" | "qq_music_musicu"
+                ),
                 "Kuwo search returned no usable results and no QQ fallback provider is configured"
             );
         }
         self.search_qq_songs(query, page, limit).await
+    }
+
+    /// Search the configured QQ fallback directly when filtering the preferred
+    /// source leaves no usable candidates (for example, singer-name matching).
+    pub async fn search_qq_fallback_songs(
+        &self,
+        query: &str,
+        page: usize,
+        limit: usize,
+    ) -> Result<Vec<Song>> {
+        anyhow::ensure!(
+            self.search.provider == "kuwo"
+                && matches!(
+                    self.search.fallback_provider.as_str(),
+                    "qq_music" | "qq_music_musicu"
+                ),
+            "QQ fallback search is not configured"
+        );
+        self.search_qq_songs(query, page, limit).await
+    }
+
+    pub fn reset_random_cursor(&self) {
+        *self.random_state.lock().expect("random state poisoned") = RandomState::default();
     }
 
     async fn search_kuwo_songs(&self, query: &str, page: usize, limit: usize) -> Result<Vec<Song>> {
@@ -91,12 +140,19 @@ impl QqMusic {
             .client
             .get(&self.search.kuwo_api_url)
             .query(&[
-                ("client", "kt"), ("all", query), ("pn", &page.to_string()),
-                ("rn", &limit.clamp(1, 50).to_string()), ("ft", "music"),
+                ("client", "kt"),
+                ("all", query),
+                ("pn", &page.to_string()),
+                ("rn", &limit.clamp(1, 50).to_string()),
+                ("ft", "music"),
                 ("uid", &self.search.kuwo_uid.to_string()),
-                ("ver", &self.search.kuwo_version), ("vipver", "1"),
-                ("cluster", "0"), ("strategy", "2012"),
-                ("encoding", "utf8"), ("rformat", "json"), ("vermerge", "1"),
+                ("ver", &self.search.kuwo_version),
+                ("vipver", "1"),
+                ("cluster", "0"),
+                ("strategy", "2012"),
+                ("encoding", "utf8"),
+                ("rformat", "json"),
+                ("vermerge", "1"),
                 ("mobi", "1"),
             ])
             .send()
@@ -107,11 +163,19 @@ impl QqMusic {
         let songs: Vec<Song> = data
             .get("abslist")
             .and_then(Value::as_array)
-            .map(|items| items.iter().map(parse_kuwo_song).filter(|song| !song.mid.is_empty()).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(parse_kuwo_song)
+                    .filter(|song| !song.mid.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         println!(
             "[music-api] Kuwo song search: query={query:?}, page={}, results={}, elapsed_ms={}",
-            page + 1, songs.len(), started.elapsed().as_millis()
+            page + 1,
+            songs.len(),
+            started.elapsed().as_millis()
         );
         Ok(songs)
     }
@@ -160,7 +224,7 @@ impl QqMusic {
         unreachable!("QQ search semantic retry loop always returns")
     }
 
-    pub async fn search_playlist(&self, query: &str) -> Result<Option<(String, String)>> {
+    async fn search_qq_playlist(&self, query: &str) -> Result<Option<(String, String)>> {
         let data = self.post_musicu(search_body(query, 3, 1, 10)).await?;
         validate_musicu_codes(&data, "music.search.SearchCgiService")?;
         let item = data
@@ -169,14 +233,100 @@ impl QqMusic {
             .and_then(|items| items.first());
         Ok(item.map(|item| {
             (
-                value_string(&item["dissid"]),
+                format!("qqpl:{}", value_string(&item["dissid"])),
                 value_string(&item["dissname"]),
             )
         }))
     }
 
-    pub async fn playlist_songs(&self, dissid: &str, limit: usize) -> Result<Vec<Song>> {
-        let id = dissid
+    async fn search_kuwo_playlist(&self, query: &str) -> Result<Option<(String, String)>> {
+        let data = self
+            .client
+            .get(&self.search.kuwo_api_url)
+            .query(&[
+                ("client", "kt"),
+                ("all", query),
+                ("pn", "0"),
+                ("rn", "10"),
+                ("ft", "playlist"),
+                ("uid", &self.search.kuwo_uid.to_string()),
+                ("ver", &self.search.kuwo_version),
+                ("vipver", "1"),
+                ("cluster", "0"),
+                ("strategy", "2012"),
+                ("encoding", "utf8"),
+                ("rformat", "json"),
+                ("vermerge", "1"),
+                ("mobi", "1"),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
+            .await?;
+        let item = data
+            .get("abslist")
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    !value_string(&item["playlistid"]).is_empty()
+                        || !value_string(&item["DC_TARGETID"]).is_empty()
+                })
+            });
+        Ok(item.map(|item| {
+            let id = first_string(item, &["playlistid", "DC_TARGETID"]);
+            let name = first_string(item, &["name", "dissname"]);
+            (format!("kwpl:{id}"), name)
+        }))
+    }
+
+    pub async fn playlist_songs_for_query(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<(String, Vec<Song>)> {
+        if self.search.provider == "kuwo" {
+            match self.search_kuwo_playlist(query).await {
+                Ok(Some((id, name))) => match self.playlist_songs(&id, limit).await {
+                    Ok(songs) if !songs.is_empty() => return Ok((name, songs)),
+                    Ok(_) => eprintln!(
+                        "[music-api] Kuwo playlist was empty; query={query:?}; falling back to QQ"
+                    ),
+                    Err(err) => eprintln!(
+                        "[music-api] Kuwo playlist read failed; query={query:?}; falling back to QQ: {err:#}"
+                    ),
+                },
+                Ok(None) => eprintln!(
+                    "[music-api] Kuwo playlist search returned no list; query={query:?}; falling back to QQ"
+                ),
+                Err(err) => eprintln!(
+                    "[music-api] Kuwo playlist search failed; query={query:?}; falling back to QQ: {err:#}"
+                ),
+            }
+            anyhow::ensure!(
+                matches!(
+                    self.search.fallback_provider.as_str(),
+                    "qq_music" | "qq_music_musicu"
+                ),
+                "Kuwo playlist lookup failed and no QQ fallback provider is configured"
+            );
+        }
+
+        let (id, name) = self
+            .search_qq_playlist(query)
+            .await?
+            .context("no matching QQ playlist")?;
+        let songs = self.playlist_songs(&id, limit).await?;
+        Ok((name, songs))
+    }
+
+    pub async fn playlist_songs(&self, playlist_id: &str, limit: usize) -> Result<Vec<Song>> {
+        if let Some(id) = playlist_id.strip_prefix("kwpl:") {
+            return self.kuwo_playlist_songs(id, limit).await;
+        }
+        let id = playlist_id
+            .strip_prefix("qqpl:")
+            .unwrap_or(playlist_id)
             .parse::<u64>()
             .context("QQ playlist id is not numeric")?;
         let body = json!({
@@ -200,12 +350,198 @@ impl QqMusic {
             .collect())
     }
 
-    pub async fn random_songs(&self, limit: usize) -> Result<Vec<Song>> {
-        let count = limit.saturating_mul(3).clamp(20, 100);
+    async fn kuwo_playlist_songs(&self, playlist_id: &str, limit: usize) -> Result<Vec<Song>> {
+        anyhow::ensure!(
+            !playlist_id.is_empty() && playlist_id.bytes().all(|byte| byte.is_ascii_digit()),
+            "invalid Kuwo playlist ID"
+        );
+        let page_size = limit.clamp(1, 50);
+        let mut songs = Vec::new();
+        for page in 0..limit.div_ceil(page_size).max(1) {
+            let data = self
+                .client
+                .get(&self.search.kuwo_playlist_info_api_url)
+                .query(&[
+                    ("pid", playlist_id),
+                    ("pn", &(page + 1).to_string()),
+                    ("rn", &page_size.to_string()),
+                ])
+                .header("User-Agent", "Mozilla/5.0 open-xiaoai-client")
+                .header("Accept", "application/json,text/plain,*/*")
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Value>()
+                .await?;
+            anyhow::ensure!(
+                data.get("code").and_then(Value::as_i64).unwrap_or(200) == 200,
+                "Kuwo playlist API returned an error code"
+            );
+            let items = data
+                .pointer("/data/musicList")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            songs.extend(
+                items
+                    .iter()
+                    .map(parse_kuwo_song)
+                    .filter(|song| !song.mid.is_empty()),
+            );
+            if songs.len() >= limit
+                || data
+                    .pointer("/data/musicList")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+            {
+                break;
+            }
+        }
+        songs.truncate(limit);
+        Ok(songs)
+    }
+
+    pub async fn random_songs(&self, limit: usize) -> Result<RandomSongBatch> {
+        if self.search.provider == "kuwo" {
+            let cooldown = self
+                .random_state
+                .lock()
+                .expect("random state poisoned")
+                .kuwo_blocked_until
+                .is_some_and(|until| until > Instant::now());
+            if !cooldown {
+                match self.kuwo_random_songs(limit).await {
+                    Ok(batch) if !batch.songs.is_empty() => return Ok(batch),
+                    Ok(_) => eprintln!("[music-api] Kuwo random chart returned no usable songs; falling back to QQ"),
+                    Err(err) => {
+                        self.random_state.lock().expect("random state poisoned").kuwo_blocked_until =
+                            Some(Instant::now() + Duration::from_secs(60));
+                        eprintln!("[music-api] Kuwo random chart failed; falling back to QQ: {err:#}");
+                    }
+                }
+            } else {
+                println!("[music-api] Kuwo random chart skipped during 60-second failure cooldown");
+            }
+            anyhow::ensure!(
+                matches!(
+                    self.search.fallback_provider.as_str(),
+                    "qq_music" | "qq_music_musicu"
+                ),
+                "Kuwo random chart failed and no QQ fallback provider is configured"
+            );
+        }
+        self.qq_random_songs(limit).await
+    }
+
+    async fn kuwo_random_songs(&self, limit: usize) -> Result<RandomSongBatch> {
+        let page_size = limit.clamp(1, 80);
+        let (page, cycle) = {
+            let state = self.random_state.lock().expect("random state poisoned");
+            (state.kuwo_page, state.kuwo_cycle)
+        };
+        let data = self
+            .client
+            .get(&self.search.kuwo_toplist_detail_api_url)
+            .query(&[
+                ("from", "pc"),
+                ("fmt", "json"),
+                ("pn", &page.to_string()),
+                ("rn", &page_size.to_string()),
+                ("type", "bang"),
+                ("data", "content"),
+                ("id", &self.search.kuwo_random_toplist_id.to_string()),
+                ("show_copyright_off", "0"),
+                ("pcmp4", "1"),
+                ("isbang", "1"),
+                ("userid", "0"),
+                ("httpStatus", "1"),
+            ])
+            .header("User-Agent", "Mozilla/5.0 open-xiaoai-client")
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
+            .await?;
+        let items = data
+            .get("musiclist")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut songs = items
+            .iter()
+            .map(parse_kuwo_song)
+            .filter(|song| !song.mid.is_empty())
+            .collect::<Vec<_>>();
+        anyhow::ensure!(!songs.is_empty(), "Kuwo toplist page has no usable songs");
+        songs.shuffle(&mut rand::rng());
+        let total = numeric_value(&data["num"]).unwrap_or(songs.len());
+        let page_count = total.div_ceil(page_size).max(1);
+        {
+            let mut state = self.random_state.lock().expect("random state poisoned");
+            state.kuwo_blocked_until = None;
+            if page + 1 >= page_count {
+                state.kuwo_page = 0;
+                state.kuwo_cycle = state.kuwo_cycle.wrapping_add(1);
+            } else {
+                state.kuwo_page = page + 1;
+            }
+        }
+        println!(
+            "[music-api] Kuwo random chart: id={}, page={}/{}, results={}",
+            self.search.kuwo_random_toplist_id,
+            page + 1,
+            page_count,
+            songs.len()
+        );
+        Ok(RandomSongBatch {
+            cycle_key: format!("kuwo:{}:{cycle}", self.search.kuwo_random_toplist_id),
+            songs,
+        })
+    }
+
+    async fn qq_random_songs(&self, limit: usize) -> Result<RandomSongBatch> {
+        let count = limit.clamp(1, 100);
+        let (offset, cycle) = {
+            let state = self.random_state.lock().expect("random state poisoned");
+            (state.qq_offset, state.qq_cycle)
+        };
+        let mut batch = self.fetch_qq_random_songs(offset, count).await?;
+        let mut batch_cycle = cycle;
+        if batch.is_empty() && offset > 0 {
+            batch_cycle = cycle.wrapping_add(1);
+            batch = self.fetch_qq_random_songs(0, count).await?;
+            let mut state = self.random_state.lock().expect("random state poisoned");
+            state.qq_offset = batch.len();
+            state.qq_cycle = batch_cycle;
+        } else {
+            let mut state = self.random_state.lock().expect("random state poisoned");
+            if batch.len() < count {
+                state.qq_offset = 0;
+                state.qq_cycle = state.qq_cycle.wrapping_add(1);
+            } else {
+                state.qq_offset = offset.saturating_add(batch.len());
+            }
+        }
+        anyhow::ensure!(
+            !batch.is_empty(),
+            "QQ random chart returned no usable songs"
+        );
+        batch.shuffle(&mut rand::rng());
+        println!(
+            "[music-api] QQ random chart: offset={offset}, results={}",
+            batch.len()
+        );
+        Ok(RandomSongBatch {
+            cycle_key: format!("qq:{}:{batch_cycle}", self.search.random_toplist_id),
+            songs: batch,
+        })
+    }
+
+    async fn fetch_qq_random_songs(&self, offset: usize, count: usize) -> Result<Vec<Song>> {
         let body = json!({
             "req_1": {
                 "module": "musicToplist.ToplistInfoServer", "method": "GetDetail",
-                "param": {"topid": self.search.random_toplist_id, "offset": 0, "num": count, "period": ""}
+                "param": {"topid": self.search.random_toplist_id, "offset": offset, "num": count, "period": ""}
             }
         });
         let data = self.post_musicu(body).await?;
@@ -215,14 +551,11 @@ impl QqMusic {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let mut songs: Vec<_> = items
+        Ok(items
             .iter()
             .map(parse_qq_song)
             .filter(|song| !song.mid.is_empty())
-            .collect();
-        songs.shuffle(&mut rand::rng());
-        songs.truncate(limit);
-        Ok(songs)
+            .collect())
     }
 
     pub async fn resolve_url(&self, mid: &str) -> Result<String> {
@@ -280,6 +613,38 @@ impl QqMusic {
                 self.resolve_backup(mid, None, remaining).await
             }
         }
+    }
+
+    pub async fn resolve_song(&self, song: &Song) -> Result<(Song, String)> {
+        if song.mid.starts_with("kw:") {
+            match self.resolve_url(&song.mid).await {
+                Ok(url) => return Ok((song.clone(), url)),
+                Err(kuwo_error) => {
+                    eprintln!(
+                        "[music-api] Kuwo stream resolution failed for {:?}; searching QQ fallback: {kuwo_error:#}",
+                        song.title
+                    );
+                    let query = format!("{} {}", song.title, song.artists.join(" "));
+                    let candidates = self
+                        .search_qq_songs(&query, 1, self.search.page_size)
+                        .await
+                        .context("QQ fallback search failed after Kuwo stream failure")?;
+                    let qq_song = best_qq_match(song, candidates)
+                        .context("QQ fallback did not return the same song")?;
+                    let url = self
+                        .resolve_url(&qq_song.mid)
+                        .await
+                        .context("QQ fallback song URL resolution failed")?;
+                    println!(
+                        "[music-api] Kuwo stream fallback resolved through QQ: {:?} -> {}",
+                        song.title, qq_song.mid
+                    );
+                    return Ok((qq_song, url));
+                }
+            }
+        }
+        let url = self.resolve_url(&song.mid).await?;
+        Ok((song.clone(), url))
     }
 
     async fn resolve_backup(
@@ -464,7 +829,10 @@ impl QqMusic {
     }
 
     async fn resolve_kuwo_url(&self, id: &str) -> Result<String> {
-        anyhow::ensure!(!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()), "invalid Kuwo RID");
+        anyhow::ensure!(
+            !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()),
+            "invalid Kuwo RID"
+        );
         let cache_key = format!("kw:{id}");
         if let Some(url) = self.cached_url(&cache_key) {
             println!("[music-api] Kuwo play URL cache hit: rid={id}");
@@ -472,7 +840,10 @@ impl QqMusic {
         }
         let mut errors = Vec::new();
         if self.play_url.kuwo_primary_enabled {
-            match self.resolve_kuwo_stream(&self.play_url.kuwo_primary_url_template, id).await {
+            match self
+                .resolve_kuwo_stream(&self.play_url.kuwo_primary_url_template, id)
+                .await
+            {
                 Ok(url) => {
                     self.cache_url(&cache_key, &url);
                     println!("[music-api] Kuwo primary stream ready: rid={id}");
@@ -485,7 +856,10 @@ impl QqMusic {
             }
         }
         if self.play_url.kuwo_backup_enabled {
-            match self.resolve_kuwo_stream(&self.play_url.kuwo_backup_url_template, id).await {
+            match self
+                .resolve_kuwo_stream(&self.play_url.kuwo_backup_url_template, id)
+                .await
+            {
                 Ok(url) => {
                     self.cache_url(&cache_key, &url);
                     println!("[music-api] Kuwo backup stream ready: rid={id}");
@@ -497,20 +871,36 @@ impl QqMusic {
                 }
             }
         }
-        anyhow::bail!("all Kuwo stream sources failed for RID {id}: {}", errors.join("; "))
+        anyhow::bail!(
+            "all Kuwo stream sources failed for RID {id}: {}",
+            errors.join("; ")
+        )
     }
 
     async fn resolve_kuwo_stream(&self, template: &str, id: &str) -> Result<String> {
-        anyhow::ensure!(!template.trim().is_empty(), "Kuwo stream URL template is empty");
+        anyhow::ensure!(
+            !template.trim().is_empty(),
+            "Kuwo stream URL template is empty"
+        );
         let endpoint = template
             .replace("{id}", id)
             .replace("{mid}", id)
             .replace("{level}", &self.play_url.kuwo_level);
-        let response = self.client.get(&endpoint).header("Range", "bytes=0-1").send().await?.error_for_status()?;
-        let content_type = response.headers().get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok()).unwrap_or("");
+        let response = self
+            .client
+            .get(&endpoint)
+            .header("Range", "bytes=0-1")
+            .send()
+            .await?
+            .error_for_status()?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
         anyhow::ensure!(
-            content_type.starts_with("audio/") || content_type.starts_with("application/octet-stream"),
+            content_type.starts_with("audio/")
+                || content_type.starts_with("application/octet-stream"),
             "Kuwo stream source returned unexpected content type: {content_type:?}"
         );
         Ok(endpoint)
@@ -643,9 +1033,9 @@ fn parse_qq_song(item: &Value) -> Song {
 }
 
 fn parse_kuwo_song(item: &Value) -> Song {
-    let raw_id = value_string(&item["MUSICRID"]);
+    let raw_id = first_string(item, &["MUSICRID", "musicrid", "rid", "id"]);
     let id = raw_id.strip_prefix("MUSIC_").unwrap_or(&raw_id).trim();
-    let artists = value_string(&item["ARTIST"])
+    let artists = first_string(item, &["ARTIST", "artist"])
         .split(['&', '、', '/', ','])
         .map(str::trim)
         .filter(|artist| !artist.is_empty())
@@ -656,16 +1046,67 @@ fn parse_kuwo_song(item: &Value) -> Song {
             .then(|| format!("kw:{id}"))
             .unwrap_or_default(),
         title: {
-            let title = value_string(&item["SONGNAME"]);
-            if title.is_empty() { value_string(&item["NAME"]) } else { title }
+            let title = first_string(item, &["SONGNAME", "songname", "name", "NAME"]);
+            if title.is_empty() {
+                value_string(&item["NAME"])
+            } else {
+                title
+            }
         },
         artists,
-        album: value_string(&item["ALBUM"]),
+        album: first_string(item, &["ALBUM", "album"]),
         duration_ms: item
             .get("DURATION")
+            .or_else(|| item.get("duration"))
             .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
             .map(|seconds| seconds * 1_000),
     }
+}
+
+fn first_string(value: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .map(|key| value_string(&value[*key]))
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+fn numeric_value(value: &Value) -> Option<usize> {
+    value
+        .as_u64()
+        .map(|value| value as usize)
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
+fn best_qq_match(original: &Song, candidates: Vec<Song>) -> Option<Song> {
+    let wanted_title = normalize_song_text(&original.title);
+    if wanted_title.is_empty() {
+        return None;
+    }
+    let wanted_artists = original
+        .artists
+        .iter()
+        .map(|artist| normalize_song_text(artist))
+        .filter(|artist| !artist.is_empty())
+        .collect::<Vec<_>>();
+
+    candidates
+        .into_iter()
+        .filter(|candidate| normalize_song_text(&candidate.title) == wanted_title)
+        .max_by_key(|candidate| {
+            candidate
+                .artists
+                .iter()
+                .map(|artist| normalize_song_text(artist))
+                .any(|artist| wanted_artists.iter().any(|wanted| artist == *wanted))
+        })
+}
+
+fn normalize_song_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn value_string(value: &Value) -> String {
@@ -764,7 +1205,59 @@ mod tests {
     }
 
     #[test]
+    fn parses_kuwo_playlist_and_chart_song_fields() {
+        let song = parse_kuwo_song(&json!({
+            "musicrid": "MUSIC_442266", "name": "睡公主", "artist": "G.E.M.邓紫棋",
+            "album": "G.E.M.", "duration": 282
+        }));
+        assert_eq!(song.mid, "kw:442266");
+        assert_eq!(song.title, "睡公主");
+        assert_eq!(song.artists, vec!["G.E.M.邓紫棋"]);
+        assert_eq!(song.duration_ms, Some(282_000));
+    }
+
+    #[test]
+    fn qq_cross_source_match_requires_same_title_and_prefers_same_artist() {
+        let original = Song {
+            mid: "kw:1".into(),
+            title: "睡公主".into(),
+            artists: vec!["G.E.M. 邓紫棋".into()],
+            album: String::new(),
+            duration_ms: None,
+        };
+        let match_song = Song {
+            mid: "qq:best".into(),
+            title: "睡公主".into(),
+            artists: vec!["G.E.M.邓紫棋".into()],
+            album: String::new(),
+            duration_ms: None,
+        };
+        let other_artist = Song {
+            mid: "qq:cover".into(),
+            title: "睡公主".into(),
+            artists: vec!["翻唱歌手".into()],
+            album: String::new(),
+            duration_ms: None,
+        };
+        let selected = best_qq_match(&original, vec![other_artist, match_song]).unwrap();
+        assert_eq!(selected.mid, "qq:best");
+        assert!(best_qq_match(
+            &original,
+            vec![Song {
+                mid: "qq:wrong".into(),
+                title: "别的歌".into(),
+                artists: vec![],
+                album: String::new(),
+                duration_ms: None
+            }]
+        )
+        .is_none());
+    }
+
+    #[test]
     fn rejects_non_numeric_kuwo_musicrid() {
-        assert!(parse_kuwo_song(&json!({"MUSICRID": "MUSIC_bad"})).mid.is_empty());
+        assert!(parse_kuwo_song(&json!({"MUSICRID": "MUSIC_bad"}))
+            .mid
+            .is_empty());
     }
 }

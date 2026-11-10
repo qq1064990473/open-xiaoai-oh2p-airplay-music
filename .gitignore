@@ -17,3 +17,7 @@
 !/dist/client-airplay-music-ha-kuwo-ranking-oh2p-armv7-glibc2.25-20260912
 !/dist/client-airplay-music-ha-kuwo-ranking.example.json
 !/dist/SHA256SUMS-v1.4.0-airplay-music-ha.5-kuwo-ranking.txt
+!/dist/client-airplay-music-ha-kuwo-radio-oh2p-armv7-glibc2.25
+!/dist/client-airplay-music-ha-kuwo-radio.example.json
+!/dist/BUILD-INFO-v1.4.0-airplay-music-ha.6-kuwo-radio.md
+!/dist/SHA256SUMS-v1.4.0-airplay-music-ha.6-kuwo-radio.txt

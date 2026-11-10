@@ -196,7 +196,12 @@ pub struct MusicSearchConfig {
     pub max_retries: usize,
     pub retry_delay_ms: u64,
     pub empty_result_retries: usize,
+    /// QQ chart ID used only after the preferred random-chart source fails.
     pub random_toplist_id: u64,
+    /// Kuwo chart ID used for random-radio playback (`16` is the Kuwo hot chart).
+    pub kuwo_random_toplist_id: u64,
+    pub kuwo_toplist_detail_api_url: String,
+    pub kuwo_playlist_info_api_url: String,
 }
 
 impl Default for MusicSearchConfig {
@@ -214,6 +219,10 @@ impl Default for MusicSearchConfig {
             retry_delay_ms: 500,
             empty_result_retries: 2,
             random_toplist_id: 4,
+            kuwo_random_toplist_id: 16,
+            kuwo_toplist_detail_api_url: "https://kbangserver.kuwo.cn/ksong.s".into(),
+            kuwo_playlist_info_api_url:
+                "https://m.kuwo.cn/newh5app/wapi/api/www/playlist/playListInfo".into(),
         }
     }
 }
@@ -296,6 +305,8 @@ impl Default for MusicPlayerConfig {
 #[serde(default)]
 pub struct MusicQueueConfig {
     pub autoplay_count: usize,
+    pub random_batch_size: usize,
+    pub random_prefetch_threshold: usize,
     pub after_single_song: String,
     pub default_order: String,
     pub repeat_mode: String,
@@ -307,6 +318,8 @@ impl Default for MusicQueueConfig {
     fn default() -> Self {
         Self {
             autoplay_count: 10,
+            random_batch_size: 10,
+            random_prefetch_threshold: 3,
             after_single_song: "same_artist".into(),
             default_order: "sequential".into(),
             repeat_mode: "off".into(),

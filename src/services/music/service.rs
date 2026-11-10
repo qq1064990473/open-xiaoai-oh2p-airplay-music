@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rand::seq::SliceRandom;
 use tokio::sync::mpsc;
 
@@ -13,7 +13,7 @@ use crate::services::media::{MediaBus, MediaEvent, MusicLedState};
 
 use super::command::MusicCommand;
 use super::player::{LocalPlayer, SIGNAL_CONT, SIGNAL_KILL, SIGNAL_STOP, SIGNAL_TERM};
-use super::qq::{QqMusic, Song};
+use super::qq::{QqMusic, RandomSongBatch, Song};
 
 #[derive(Clone)]
 pub struct MusicService {
@@ -30,6 +30,7 @@ impl MusicService {
     ) -> Result<Self> {
         let provider = QqMusic::new(config.search.clone(), config.play_url.clone())?;
         let player = LocalPlayer::new(config.player.clone());
+        let random_batch_size = config.queue.random_batch_size.max(1);
         let (tx, rx) = mpsc::unbounded_channel();
         let active = Arc::new(AtomicBool::new(false));
         let actor = Actor {
@@ -55,6 +56,12 @@ impl MusicService {
             queue_epoch: 0,
             url_retry_scheduled: false,
             url_cooldown_retry_count: 0,
+            random_mode: false,
+            random_fetch_in_flight: false,
+            random_cycle_key: None,
+            random_failures: 0,
+            random_retry_scheduled: false,
+            random_batch_size,
         };
         tokio::spawn(actor.run());
         Ok(Self { tx, active })
@@ -94,6 +101,13 @@ enum ServiceMessage {
         songs: Vec<Song>,
     },
     RetryQueue {
+        epoch: u64,
+    },
+    RandomQueueReady {
+        epoch: u64,
+        result: Result<RandomSongBatch, String>,
+    },
+    RetryRandomQueue {
         epoch: u64,
     },
 }
@@ -154,6 +168,12 @@ struct Actor {
     queue_epoch: u64,
     url_retry_scheduled: bool,
     url_cooldown_retry_count: usize,
+    random_mode: bool,
+    random_fetch_in_flight: bool,
+    random_cycle_key: Option<String>,
+    random_failures: usize,
+    random_retry_scheduled: bool,
+    random_batch_size: usize,
 }
 
 impl Actor {
@@ -211,6 +231,25 @@ impl Actor {
                     }
                 }
             }
+            ServiceMessage::RandomQueueReady { epoch, result } => {
+                if epoch == self.queue_epoch && self.random_mode {
+                    self.random_fetch_in_flight = false;
+                    match result {
+                        Ok(batch) => self.append_random_queue(epoch, batch).await,
+                        Err(err) => {
+                            self.random_failures = self.random_failures.saturating_add(1);
+                            eprintln!("[music] random queue refill failed: {err}");
+                            self.schedule_random_retry(epoch);
+                        }
+                    }
+                }
+            }
+            ServiceMessage::RetryRandomQueue { epoch } => {
+                if epoch == self.queue_epoch && self.random_mode {
+                    self.random_retry_scheduled = false;
+                    self.request_random_batch();
+                }
+            }
         }
     }
 
@@ -234,6 +273,12 @@ impl Actor {
             MusicCommand::Previous => self.previous(),
             MusicCommand::Stop => {
                 self.queue_epoch = self.queue_epoch.wrapping_add(1);
+                self.random_mode = false;
+                self.random_fetch_in_flight = false;
+                self.random_cycle_key = None;
+                self.random_failures = 0;
+                self.random_retry_scheduled = false;
+                self.provider.reset_random_cursor();
                 self.url_retry_scheduled = false;
                 self.url_cooldown_retry_count = 0;
                 self.queue.clear();
@@ -304,14 +349,122 @@ impl Actor {
                 if self.reject_for_airplay() {
                     return;
                 }
-                match self.provider.random_songs(count.max(1)).await {
-                    Ok(songs) => {
-                        self.replace_queue(songs).await;
-                    }
-                    Err(err) => eprintln!("[music] random queue failed: {err:#}"),
-                }
+                self.begin_random_playback(count.max(1)).await;
             }
         }
+    }
+
+    async fn begin_random_playback(&mut self, count: usize) {
+        self.queue_epoch = self.queue_epoch.wrapping_add(1);
+        self.queue_epoch = self.queue_epoch.max(1);
+        self.random_mode = true;
+        self.random_fetch_in_flight = false;
+        self.random_cycle_key = None;
+        self.random_failures = 0;
+        self.random_retry_scheduled = false;
+        self.random_batch_size = count.max(1);
+        self.provider.reset_random_cursor();
+        self.url_retry_scheduled = false;
+        self.url_cooldown_retry_count = 0;
+        self.queue.clear();
+        self.history.clear();
+        self.played_mids.clear();
+        self.consecutive_failures = 0;
+        if self.current.is_some() {
+            self.stop_current(EndReason::Replace);
+        }
+        self.update_active();
+        self.request_random_batch();
+        println!(
+            "[music] random radio started: batch_size={}, prefetch_at_queue_size={}",
+            self.random_batch_size, self.config.queue.random_prefetch_threshold
+        );
+    }
+
+    fn request_random_batch(&mut self) {
+        if !self.random_mode
+            || self.random_fetch_in_flight
+            || self.random_retry_scheduled
+            || self.queue.len() > self.config.queue.random_prefetch_threshold
+        {
+            return;
+        }
+        self.random_fetch_in_flight = true;
+        let epoch = self.queue_epoch;
+        let count = self.random_batch_size.max(1);
+        let provider = self.provider.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = provider
+                .random_songs(count)
+                .await
+                .map_err(|err| format!("{err:#}"));
+            let _ = tx.send(ServiceMessage::RandomQueueReady { epoch, result });
+        });
+    }
+
+    async fn append_random_queue(&mut self, epoch: u64, batch: RandomSongBatch) {
+        if epoch != self.queue_epoch || !self.random_mode {
+            return;
+        }
+        if self.random_cycle_key.as_deref() != Some(batch.cycle_key.as_str()) {
+            let current_mid = self.current.as_ref().map(|track| track.song.mid.clone());
+            self.played_mids.clear();
+            if let Some(mid) = current_mid {
+                self.played_mids.insert(mid);
+            }
+            println!("[music] random chart cycle/source: {}", batch.cycle_key);
+            self.random_cycle_key = Some(batch.cycle_key);
+        }
+        let current_mid = self.current.as_ref().map(|track| track.song.mid.as_str());
+        let queued = self
+            .queue
+            .iter()
+            .map(|song| song.mid.clone())
+            .collect::<HashSet<_>>();
+        let before = batch.songs.len();
+        let songs = batch
+            .songs
+            .into_iter()
+            .filter(|song| {
+                !song.mid.is_empty()
+                    && current_mid != Some(song.mid.as_str())
+                    && !self.played_mids.contains(&song.mid)
+                    && !queued.contains(&song.mid)
+            })
+            .collect::<Vec<_>>();
+        let appended = songs.len();
+        self.queue.extend(songs);
+        self.random_failures = 0;
+        self.random_retry_scheduled = false;
+        println!(
+            "[music] random radio queue appended: tracks={appended}, filtered={}",
+            before.saturating_sub(appended)
+        );
+        if self.current.is_none() && !self.queue.is_empty() && !self.url_retry_scheduled {
+            self.start_next().await;
+        }
+        self.update_active();
+        self.request_random_batch();
+    }
+
+    fn schedule_random_retry(&mut self, epoch: u64) {
+        if self.random_retry_scheduled {
+            return;
+        }
+        self.random_retry_scheduled = true;
+        let delays = [5_u64, 15, 30, 60];
+        let index = self.random_failures.saturating_sub(1).min(delays.len() - 1);
+        let delay = Duration::from_secs(delays[index]);
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = tx.send(ServiceMessage::RetryRandomQueue { epoch });
+        });
+        println!(
+            "[music] random radio refill retry scheduled in {}s",
+            delay.as_secs()
+        );
     }
 
     fn reject_for_airplay(&self) -> bool {
@@ -336,16 +489,41 @@ impl Actor {
         let provider = self.provider.clone();
         let tx = self.tx.clone();
         let count = self.config.queue.autoplay_count.max(1);
+        let qq_fallback_enabled = self.config.search.provider == "kuwo"
+            && matches!(
+                self.config.search.fallback_provider.as_str(),
+                "qq_music" | "qq_music_musicu"
+            );
         tokio::spawn(async move {
             match provider.search_songs(&artist, 1, count).await {
                 Ok(candidates) => {
-                    let songs = candidates
+                    let mut songs = candidates
                         .into_iter()
                         .filter(|song| {
                             song.mid != selected_mid
                                 && song.artists.iter().any(|name| name == &artist)
                         })
                         .collect::<Vec<_>>();
+                    if songs.is_empty() && qq_fallback_enabled {
+                        match provider.search_qq_fallback_songs(&artist, 1, count).await {
+                            Ok(candidates) => {
+                                songs = candidates
+                                    .into_iter()
+                                    .filter(|song| {
+                                        song.mid != selected_mid
+                                            && song.artists.iter().any(|name| name == &artist)
+                                    })
+                                    .collect();
+                                println!(
+                                    "[music] QQ fallback artist queue ready: artist={artist:?}, tracks={}",
+                                    songs.len()
+                                );
+                            }
+                            Err(err) => eprintln!(
+                                "[music] QQ fallback artist queue failed for {artist:?}: {err:#}"
+                            ),
+                        }
+                    }
                     println!(
                         "[music] background queue ready: artist={artist:?}, tracks={}",
                         songs.len()
@@ -380,26 +558,55 @@ impl Actor {
             }
         }
         result.truncate(limit);
+        if result.is_empty()
+            && self.config.search.provider == "kuwo"
+            && matches!(
+                self.config.search.fallback_provider.as_str(),
+                "qq_music" | "qq_music_musicu"
+            )
+        {
+            println!(
+                "[music] no Kuwo singer results matched {singer:?}; retrying singer search on QQ"
+            );
+            for page in 1..=3 {
+                let songs = self
+                    .provider
+                    .search_qq_fallback_songs(singer, page, self.config.search.page_size)
+                    .await?;
+                if songs.is_empty() {
+                    break;
+                }
+                result.extend(
+                    songs
+                        .into_iter()
+                        .filter(|song| song.artists.iter().any(|name| name.contains(singer))),
+                );
+                if result.len() >= limit {
+                    break;
+                }
+            }
+            result.truncate(limit);
+        }
         anyhow::ensure!(!result.is_empty(), "no songs found for singer");
         Ok(result)
     }
 
     async fn build_playlist_queue(&self, query: &str) -> Result<Vec<Song>> {
-        let (id, name) = self
+        let (name, songs) = self
             .provider
-            .search_playlist(query)
-            .await?
-            .context("no matching playlist")?;
-        let songs = self
-            .provider
-            .playlist_songs(&id, self.config.queue.autoplay_count.max(1))
+            .playlist_songs_for_query(query, self.config.queue.autoplay_count.max(1))
             .await?;
         anyhow::ensure!(!songs.is_empty(), "playlist is empty");
-        println!("[music] playlist selected: {name} ({id})");
+        println!("[music] playlist selected: {name}");
         Ok(songs)
     }
 
     async fn replace_queue(&mut self, songs: Vec<Song>) -> u64 {
+        self.random_mode = false;
+        self.random_fetch_in_flight = false;
+        self.random_cycle_key = None;
+        self.random_failures = 0;
+        self.random_retry_scheduled = false;
         let mut seen = HashSet::new();
         let mut songs: Vec<_> = songs
             .into_iter()
@@ -537,6 +744,7 @@ impl Actor {
     async fn player_exited(&mut self, generation: u64, status: std::io::Result<ExitStatus>) {
         if generation == 0 && self.current.is_none() {
             self.start_next().await;
+            self.request_random_batch();
             return;
         }
         if !self
@@ -606,10 +814,14 @@ impl Actor {
             }
         }
         self.update_active();
+        self.request_random_batch();
     }
 
     fn refill_repeat_all(&mut self) {
-        if self.queue.is_empty() && self.repeat_mode == RepeatMode::All && !self.history.is_empty()
+        if !self.random_mode
+            && self.queue.is_empty()
+            && self.repeat_mode == RepeatMode::All
+            && !self.history.is_empty()
         {
             let mut songs = std::mem::take(&mut self.history);
             if self.shuffle {
@@ -629,11 +841,12 @@ impl Actor {
             if retry_count == 0 && self.played_mids.contains(&song.mid) {
                 continue;
             }
-            match self.provider.resolve_url(&song.mid).await {
-                Ok(url) => match self.player.spawn(&url) {
+            let source_mid = song.mid.clone();
+            match self.provider.resolve_song(&song).await {
+                Ok((resolved_song, url)) => match self.player.spawn(&url) {
                     Ok(mut child) => {
                         let Some(pid) = child.id() else {
-                            eprintln!("[music] player returned no PID for {}", song.title);
+                            eprintln!("[music] player returned no PID for {}", resolved_song.title);
                             continue;
                         };
                         self.generation = self.generation.wrapping_add(1).max(1);
@@ -643,15 +856,16 @@ impl Actor {
                             let status = child.wait().await;
                             let _ = tx.send(ServiceMessage::PlayerExited { generation, status });
                         });
-                        self.played_mids.insert(song.mid.clone());
+                        self.played_mids.insert(source_mid);
+                        self.played_mids.insert(resolved_song.mid.clone());
                         self.url_cooldown_retry_count = 0;
                         println!(
                             "[music] playing: {} - {}",
-                            song.title,
-                            song.artists.join("/")
+                            resolved_song.title,
+                            resolved_song.artists.join("/")
                         );
                         self.current = Some(CurrentTrack {
-                            song,
+                            song: resolved_song,
                             pid,
                             generation,
                             ending: None,
@@ -676,7 +890,10 @@ impl Actor {
                         return;
                     }
                     Err(err) => {
-                        eprintln!("[music] failed to start player for {}: {err:#}", song.title)
+                        eprintln!(
+                            "[music] failed to start player for {}: {err:#}",
+                            resolved_song.title
+                        )
                     }
                 },
                 Err(err) => {
@@ -695,6 +912,7 @@ impl Actor {
                             self.current = None;
                             self.media.set_music_state(MusicLedState::Idle);
                             self.update_active();
+                            self.request_random_batch();
                             return;
                         }
                         self.queue.push_front(song);
@@ -709,6 +927,7 @@ impl Actor {
                         self.current = None;
                         self.media.set_music_state(MusicLedState::Idle);
                         self.update_active();
+                        self.request_random_batch();
                         return;
                     }
                     eprintln!("[music] failed to resolve URL for {}: {err:#}", song.title);
@@ -725,11 +944,12 @@ impl Actor {
         self.current = None;
         self.media.set_music_state(MusicLedState::Idle);
         self.update_active();
+        self.request_random_batch();
     }
 
     fn update_active(&self) {
         self.active.store(
-            self.current.is_some() || !self.queue.is_empty(),
+            self.current.is_some() || !self.queue.is_empty() || self.random_mode,
             Ordering::Release,
         );
     }

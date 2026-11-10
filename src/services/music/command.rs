@@ -68,14 +68,14 @@ impl MusicCommandParser {
                 return Some(if session_active {
                     MusicCommand::Shuffle
                 } else {
-                    MusicCommand::Random(self.config.queue.autoplay_count.max(1))
+                    MusicCommand::Random(self.config.queue.random_batch_size.max(1))
                 });
             }
         }
 
         if exact(&text, &self.config.commands.shuffle_words) {
             return Some(MusicCommand::Random(
-                self.config.queue.autoplay_count.max(1),
+                self.config.queue.random_batch_size.max(1),
             ));
         }
 
